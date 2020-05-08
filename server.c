@@ -24,6 +24,7 @@
 unsigned int myseq;
 unsigned int last_in_order;
 int connsd;
+int filed;  //file descriptor
 struct sockaddr_in cliaddr;
 int acked[N] = {0}; //array to report to sending threads that an ack is received
 int indexes[N] = {0};   //array of indexes
@@ -325,9 +326,6 @@ int send_list(struct qnode ** send_queue)
     }
 
     blen = strlen(buff);
-        
-    //send the list divided in more messages
-    
     sizetocpy = (int) blen;
 
     while(sizetocpy > 0) {

@@ -21,7 +21,7 @@
 
 unsigned int myseq;
 unsigned int last_in_order;    //last packet in the correct order
-int sockfd;
+int sockfd, bsize = BUFF_SIZE, fd, first = 1, writing = 1;
 struct sockaddr_in servaddr;
 int acked[N] = {0}; //array to report to sending threads that an ack is received
 int indexes[N] = {0};   //array of indexes
@@ -31,12 +31,13 @@ pthread_mutex_t rec_mutex = PTHREAD_MUTEX_INITIALIZER;   //to sync the access to
 pthread_mutex_t order_mutex = PTHREAD_MUTEX_INITIALIZER; //to sync the ordered handling of the messages
 pthread_mutex_t snd_mutex = PTHREAD_MUTEX_INITIALIZER;   //to sync the accesses to snd_queue
 pthread_mutex_t last_mutex = PTHREAD_MUTEX_INITIALIZER; //to sync the access to last_in_order
+pthread_mutex_t wr_mutex = PTHREAD_MUTEX_INITIALIZER;   //to sync writes on the file
 pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
 pthread_cond_t index_cond = PTHREAD_COND_INITIALIZER;
+pthread_cond_t wr_cond = PTHREAD_COND_INITIALIZER;
 pthread_cond_t ack_cond[N];
 struct qnode * rec_queue = NULL;    //receiving queue
 char * global_buffer;    //buffer used by the handler threads
-int bsize = BUFF_SIZE;   //current size of the buffer
 char req_file[BUFF_SIZE];    //requested file name
 
 int open_connection()
@@ -262,7 +263,7 @@ void * msg_handler(void * args)
      * Manage the packets in the correct order
      */
 
-    int check = 0, blen, fd, writing;
+    int check = 0, blen, residual = 0;
     struct qnode ** snd_queue = (struct qnode **) args;
     struct qnode * node = NULL;
     struct qnode * msg_node = NULL;
@@ -344,7 +345,7 @@ void * msg_handler(void * args)
                             
                             if(msg_node->m->endfile == 1) {
                                 printf("\nLIST:\n%s\n", global_buffer);
-                                memset(global_buffer, 0, bsize);
+                                memset(global_buffer, 0, bsize+1);
                             }
                         }
                         else {
@@ -353,6 +354,7 @@ void * msg_handler(void * args)
                     }
                     else if(msg_node->m->cmd_t == 2) { //answer to GET
                         if(msg_node->m->ecode == success) {
+                            /*
                             blen = strlen(global_buffer);
                             if(msg_node->m->data_size + blen >= BUFF_SIZE) {
                                 bsize += BUFF_SIZE;
@@ -364,7 +366,65 @@ void * msg_handler(void * args)
                             }
                         
                             strcat(global_buffer, msg_node->m->data);
-                                                        
+                            */
+                            
+                            if(first) {
+                                strcat(new_file, req_file);
+                                fd = open(new_file, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+                                if(fd == -1) {
+                                    fprintf(stderr, "Error in open\n");
+                                    exit(EXIT_FAILURE);
+                                }
+                                first = 0;
+                            }
+                            
+                            check = pthread_mutex_lock(&wr_mutex);
+                            if(check != 0) {
+                                perror("pthread_mutex_lock");
+                                exit(EXIT_FAILURE);
+                            }
+                            
+                            writing = 1;
+                            
+                            //lseek(fd, 0, SEEK_END);
+                            
+                            check = write(fd, msg_node->m->data, msg_node->m->data_size);
+                            if(check == -1) {
+                                perror("write");
+                                exit(EXIT_FAILURE);
+                            }
+                            else if(check < msg_node->m->data_size) {
+                                residual = msg_node->m->data_size - check;
+                                check = 0;
+                                while(check < residual) {
+                                    check = write(fd, msg_node->m->data, residual);
+                                    if(check == -1) {
+                                        perror("write");
+                                        exit(EXIT_FAILURE);
+                                    }
+                                    residual -= check;
+                                }
+                            }
+                            
+                            if(msg_node->m->endfile == 1) {
+                                close(fd);
+                                first = 1;
+                                printf("\nDownload finished.\n\n");
+                                memset(new_file, 0, BUFF_SIZE);
+                                strcat(new_file, "new_");
+                            }
+                            
+                            check = pthread_mutex_unlock(&wr_mutex);
+                            if(check != 0) {
+                                perror("pthread_mutex_unlock");
+                                exit(EXIT_FAILURE);
+                            }
+                            
+                            writing = 0;
+                            
+                            pthread_cond_broadcast(&wr_cond);
+                            
+                            /*
                             if(msg_node->m->endfile == 1) {
                                 writing = 1;
                                 strcat(new_file, req_file);
@@ -400,7 +460,7 @@ void * msg_handler(void * args)
                                 }
                             
                                 memset(global_buffer, 0, bsize);
-                            }                        
+                            }      */                  
                         }
                         else if(msg_node->m->ecode == clierror) {
                             printf("\nError: the file requested doesn't exist. Please, try again.\n\n");
@@ -427,7 +487,6 @@ void * msg_handler(void * args)
                         exit(EXIT_FAILURE);
                     }
 
-                    //pthread_cond_signal(&cond);
                     pthread_cond_broadcast(&cond);
                 }
                 else {  //the message is not in the correct order
@@ -465,7 +524,7 @@ void * msg_handler(void * args)
                             
                             if(msg_node->m->endfile == 1) {
                                 printf("\nLIST:\n%s\n", global_buffer);
-                                memset(global_buffer, 0, bsize);
+                                memset(global_buffer, 0, bsize+1);
                             }
                         }
                         else {
@@ -474,6 +533,7 @@ void * msg_handler(void * args)
                     }
                     else if(msg_node->m->cmd_t == 2) { //answer to GET
                         if(msg_node->m->ecode == success) {
+                            /*
                             blen = strlen(global_buffer);
                             if(msg_node->m->data_size + blen >= BUFF_SIZE) {
                                 bsize += BUFF_SIZE;
@@ -485,7 +545,76 @@ void * msg_handler(void * args)
                             }
                         
                             strcat(global_buffer, msg_node->m->data);
-                                                        
+                            
+                            */
+                            
+                            check = pthread_mutex_lock(&wr_mutex);
+                            if(check != 0) {
+                                perror("pthread_mutex_lock");
+                                exit(EXIT_FAILURE);
+                            }
+                            
+                            while(writing) {
+                                check = pthread_cond_wait(&wr_cond, &wr_mutex);
+                            }
+                            
+                            /*
+                            while(writing) {
+                                //check = pthread_cond_wait(&wr_cond, &wr_mutex);
+                                gettimeofday(&now, NULL);
+                                time_to_wait.tv_sec = now.tv_sec + T;
+                                time_to_wait.tv_nsec = now.tv_usec * 1000UL;
+                                
+                                check = pthread_cond_timedwait(&wr_cond, &wr_mutex, &time_to_wait); //wait for the condition to become true
+                                if(check != 0 && check != ETIMEDOUT) {
+                                    perror("pthread_cond_timedwait");
+                                    exit(EXIT_FAILURE);
+                                }
+                            }
+                            
+                            lseek(fd, 0, SEEK_END);
+                            */
+                            
+                            writing = 1;
+
+                            check = write(fd, msg_node->m->data, msg_node->m->data_size);
+                            if(check == -1) {
+                                perror("write");
+                                exit(EXIT_FAILURE);
+                            }
+                            else if(check < msg_node->m->data_size) {
+                                residual = msg_node->m->data_size - check;
+                                check = 0;
+                                while(check < residual) {
+                                    check = write(fd, msg_node->m->data, residual);
+                                    if(check == -1) {
+                                        perror("write");
+                                        exit(EXIT_FAILURE);
+                                    }
+                                    residual -= check;
+                                }
+                            }
+                            
+                            if(msg_node->m->endfile == 1) {
+                                close(fd);
+                                first = 1;
+                                printf("\nDownload finished.\n\n");
+                                memset(new_file, 0, BUFF_SIZE);
+                                strcat(new_file, "new_");
+                            }
+                            
+                            check = pthread_mutex_unlock(&wr_mutex);
+                            if(check != 0) {
+                                perror("pthread_mutex_unlock");
+                                exit(EXIT_FAILURE);
+                            }
+                            
+                            writing = 0;
+                            
+                            pthread_cond_broadcast(&wr_cond);
+                            
+                            /*
+                                                                                    
                             if(msg_node->m->endfile == 1) {
                                 writing = 1;
                                 strcat(new_file, req_file);
@@ -521,7 +650,7 @@ void * msg_handler(void * args)
                                 }
                             
                                 memset(global_buffer, 0, bsize);
-                            }                        
+                            }                        */
                         }
                         else if(msg_node->m->ecode == clierror) {
                             printf("\nError: the file requested doesn't exist. Please, try again.\n\n");
@@ -776,6 +905,8 @@ int main(int argc, char** argv)
         perror("malloc");
         exit(EXIT_FAILURE);
     }
+    
+    global_buffer[0] = '\0';
 
     t = pthread_create(&r_tid, NULL, recv_answer, (void *) &s_head);  //receiving thread
     if(t != 0) {
