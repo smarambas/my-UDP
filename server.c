@@ -23,8 +23,7 @@
 
 unsigned int myseq;
 unsigned int last_in_order;
-int connsd;
-int filed;  //file descriptor
+int connsd, filed, closed = 0;  //file descriptor
 struct sockaddr_in cliaddr;
 int acked[N] = {0}; //array to report to sending threads that an ack is received
 int indexes[N] = {0};   //array of indexes
@@ -49,10 +48,19 @@ int accept_connection(int listensd, struct sockaddr_in * cliaddr, unsigned int *
     int sd, check = 0;
     struct msg m;
     socklen_t addlen = sizeof(*cliaddr);
+    fd_set rset;
+    
+    FD_ZERO(&rset);
 
     while(check == 0) {
-        //SHOULD USE SELECT
-        if((recvfrom(listensd, (void*) &m, sizeof(struct msg) /*MAXSIZE*/, 0, (struct sockaddr*) cliaddr, &addlen)) < 0) {
+        FD_SET(listensd, &rset);
+        
+        if(select(listensd+1, &rset, NULL, NULL, NULL) < 0) {
+            perror("select");
+            exit(EXIT_FAILURE);
+        }
+        
+        if((recvfrom(listensd, (void*) &m, sizeof(struct msg), 0, (struct sockaddr*) cliaddr, &addlen)) < 0) {
             fprintf(stderr, "Error in recvfrom\n");
             return -1;
         }
@@ -92,22 +100,24 @@ int complete_handshake(unsigned int * cliseq)
         m.ack_num = *cliseq;
         
         // SYN-ACK
-        if((sendto(connsd, (void*) &m, sizeof(struct msg) /*MAXSIZE*/, 0, (struct sockaddr*) &cliaddr, addlen)) < 0) {
+        if((sendto(connsd, (void*) &m, sizeof(struct msg), 0, (struct sockaddr*) &cliaddr, addlen)) < 0) {
             fprintf(stderr, "Error in sendto\n");
             return -1;
         }
         reset_msg(&m);
 
-        if((recvfrom(connsd, (void*) &m, sizeof(struct msg) /*MAXSIZE*/, 0, (struct sockaddr*) &cliaddr, &addlen)) < 0) {
+        if((recvfrom(connsd, (void*) &m, sizeof(struct msg), 0, (struct sockaddr*) &cliaddr, &addlen)) < 0) {
             fprintf(stderr, "Error in recvfrom\n");
             return -1;
         }
         
-        if(is_ack(&m, myseq)) {
+        if(m.ack == 1 && m.ack_num == myseq) {
             printf("Connection established with:\n"
                     "Client address\t%s\n"
-                    "Client port\t%u\n"
-                    "myseq = %u\n\n", inet_ntoa((cliaddr).sin_addr), ntohs((cliaddr).sin_port), myseq);
+                    "Client port\t%u\n\n", inet_ntoa((cliaddr).sin_addr), ntohs((cliaddr).sin_port));
+#ifdef debug 
+            printf("myseq = %u\n\n", myseq);
+#endif            
             last_in_order = m.seq;
             check = 1;
         }
@@ -288,7 +298,7 @@ void * send_message(void * args)
 int send_list(struct qnode ** send_queue)
 {
     char * buff;    //the list to send
-    unsigned int bsize = MAXSIZE+1-OFFS;
+    unsigned int bsize = PAYLOAD_SIZE; //MAXSIZE+1-OFFS;
     size_t blen = 0;
     struct msg m;
     int t, dim, i, sizetocpy, packs = 1, check;
@@ -311,7 +321,7 @@ int send_list(struct qnode ** send_queue)
         for(i = 0; i < check; i++) {
             if(filelist[i]->d_name[0] != '.') {
                 if((blen + strlen(filelist[i]->d_name)) >= bsize) {
-                    bsize += MAXSIZE+1-OFFS;
+                    bsize += PAYLOAD_SIZE; //MAXSIZE+1-OFFS;
                     buff = realloc(buff, bsize);
                     if(!buff) {
                         fprintf(stderr, "Error in realloc\n");
@@ -331,12 +341,12 @@ int send_list(struct qnode ** send_queue)
     while(sizetocpy > 0) {
         reset_msg(&m);
 
-        if(sizetocpy > (MAXSIZE+1-OFFS)) {
-            dim = MAXSIZE+1-OFFS;
+        if(sizetocpy > PAYLOAD_SIZE) {  //(MAXSIZE+1-OFFS)) {
+            dim = PAYLOAD_SIZE; //MAXSIZE+1-OFFS;
             m.endfile = 0;
         }
-        else if(sizetocpy == (MAXSIZE+1-OFFS)) {
-            dim = MAXSIZE+1-OFFS;
+        else if(sizetocpy == PAYLOAD_SIZE) {    //(MAXSIZE+1-OFFS)) {
+            dim = PAYLOAD_SIZE; //MAXSIZE+1-OFFS;
             m.endfile = 1;
         }
         else {
@@ -379,8 +389,8 @@ int send_list(struct qnode ** send_queue)
 
 void send_file(struct qnode ** send_queue, char * filename)
 {
-    int fd, i, t, check/*, filesize, bsize = MAXSIZE+1-OFFS, dim = 0*/;
-    unsigned int filesize, dim = 0, bsize = MAXSIZE+1-OFFS;
+    int fd, i, t, check;
+    unsigned int filesize, dim = 0, bsize = PAYLOAD_SIZE;    //MAXSIZE+1-OFFS;
     struct msg m;
 
     fd = open(filename, O_RDONLY);
@@ -437,7 +447,7 @@ void send_file(struct qnode ** send_queue, char * filename)
                 exit(EXIT_FAILURE);
             }
             lseek(fd, -check, SEEK_CUR);
-            memset(m.data, 0, MAXSIZE+1-OFFS);
+            memset(m.data, 0, PAYLOAD_SIZE);  //MAXSIZE+1-OFFS);
             check = read(fd, m.data, bsize);
         }
         myseq += check;
@@ -470,13 +480,14 @@ void send_file(struct qnode ** send_queue, char * filename)
 
 void * msg_handler(void * args) 
 {
-    int check;
+    int t, check;
     struct qnode ** snd_queue = (struct qnode **) args;
     struct qnode * node = NULL;
     struct qnode * msg_node = NULL;
     char new_file [BUFF_SIZE] = "new_";
     struct timespec time_to_wait;
     struct timeval now;
+    struct msg m;
     
     check = pthread_mutex_lock(&rec_mutex);
     if(check != 0) {
@@ -545,6 +556,25 @@ void * msg_handler(void * args)
                     else if(msg_node->m->cmd_t == 3) {  //answer to PUT
                         //recv_file
                     }
+                    else if(msg_node->m->fin == 1) {    //close connection
+                        reset_msg(&m);
+                        myseq += 1;
+                        m.seq = myseq;
+                        m.data_size = 1;
+                        m.fin = 1;
+                        
+                        insert_sorted(snd_queue, &cliaddr, &m, -1);
+                        
+                        t = pthread_create(&s_tid[0], NULL, send_message, (void *) snd_queue); //sending thread
+                        if(t != 0) {
+                            fprintf(stderr, "Error in pthread_create\n");
+                            exit(EXIT_FAILURE);
+                        }
+                        
+                        pthread_join(s_tid[0], NULL);
+                        
+                        closed = 1;
+                    }
                     
                     check = pthread_mutex_lock(&last_mutex);
                     if(check != 0) {
@@ -591,6 +621,27 @@ void * msg_handler(void * args)
                     else if(msg_node->m->cmd_t == 3) {  //answer to PUT
                         //recv_file
                     }
+                    else if(msg_node->m->fin == 1) {    //close connection
+                        reset_msg(&m);
+                        myseq += 1;
+                        m.seq = myseq;
+                        m.data_size = 1;
+                        m.fin = 1;
+                        
+                        insert_sorted(snd_queue, &cliaddr, &m, -1);
+                        
+                        t = pthread_create(&s_tid[0], NULL, send_message, (void *) snd_queue); //sending thread
+                        if(t != 0) {
+                            fprintf(stderr, "Error in pthread_create\n");
+                            exit(EXIT_FAILURE);
+                        }
+                        
+                        for(int i = 0; i < N; i++) {
+                            pthread_join(s_tid[i], NULL);
+                        }
+                        
+                        closed = 1;
+                    }
                     
                     check = pthread_mutex_lock(&last_mutex);
                     if(check != 0) {
@@ -631,6 +682,7 @@ void recv_msgs(struct qnode ** send_queue)
     socklen_t addlen = sizeof(cliaddr);
     pthread_t h_tid;
     fd_set rset;
+    struct timeval tv = {T, 0};
     
     for(int i = 0; i < N; i++) {
         check = pthread_cond_init(&ack_cond[i], NULL);
@@ -642,47 +694,51 @@ void recv_msgs(struct qnode ** send_queue)
     
     FD_ZERO(&rset);
     
-    while(1) {
+    while(!closed) {
         FD_SET(connsd, &rset);
         
-        if(select(connsd+1, &rset, NULL, NULL, NULL) < 0) {
+        check = select(connsd+1, &rset, NULL, NULL, &tv);
+        if(check < 0) {
             perror("select");
             exit(EXIT_FAILURE);
         }
-        
-        if(FD_ISSET(connsd, &rset)) {
-            reset_msg(&m);
-            check = recvfrom(connsd, (void*) &m, sizeof(struct msg), 0, (struct sockaddr*) &cliaddr, &addlen);
-            if(check < 0) {
-                fprintf(stderr, "Error in recvfrom\n");
-                exit(EXIT_FAILURE);
-            }
-            
+        else if(check > 0) {
+            if(FD_ISSET(connsd, &rset)) {
+                reset_msg(&m);
+                check = recvfrom(connsd, (void*) &m, sizeof(struct msg), 0, (struct sockaddr*) &cliaddr, &addlen);
+                if(check < 0) {
+                    fprintf(stderr, "Error in recvfrom\n");
+                    exit(EXIT_FAILURE);
+                }
+                
 #ifdef debug
-            printf("Received message from the client with seq #%d\n", m.seq);
+                printf("Received message from the client with seq #%d\n", m.seq);
 #endif
-            
-            check = pthread_mutex_lock(&rec_mutex);
-            if(check != 0) {
-                fprintf(stderr, "Error in pthread_mutex_lock\n");
-                exit(EXIT_FAILURE);
-            }
-            
-            insert_sorted(&rec_queue, NULL, &m, 0);
-            
-            check = pthread_mutex_unlock(&rec_mutex);
-            if(check != 0) {
-                fprintf(stderr, "Error in pthread_mutex_unlock\n");
-                exit(EXIT_FAILURE);
-            }
-            
-            t = pthread_create(&h_tid, NULL, msg_handler, (void *) send_queue); //sending thread
-            if(t != 0) {
-                fprintf(stderr, "Error in pthread_create\n");
-                exit(EXIT_FAILURE);
+                
+                check = pthread_mutex_lock(&rec_mutex);
+                if(check != 0) {
+                    fprintf(stderr, "Error in pthread_mutex_lock\n");
+                    exit(EXIT_FAILURE);
+                }
+                
+                insert_sorted(&rec_queue, NULL, &m, 0);
+                
+                check = pthread_mutex_unlock(&rec_mutex);
+                if(check != 0) {
+                    fprintf(stderr, "Error in pthread_mutex_unlock\n");
+                    exit(EXIT_FAILURE);
+                }
+                
+                t = pthread_create(&h_tid, NULL, msg_handler, (void *) send_queue); //sending thread
+                if(t != 0) {
+                    fprintf(stderr, "Error in pthread_create\n");
+                    exit(EXIT_FAILURE);
+                }
             }
         }
     }
+    
+    pthread_join(h_tid, NULL);
     
     return;
 }
@@ -757,6 +813,7 @@ int main(int argc, char** argv)
             recv_msgs(&s_head);
 
             close(connsd);
+            printf("Connection closed with client on port %u\n\n", ntohs((cliaddr).sin_port));
             exit(EXIT_SUCCESS);
         }
         close(connsd);

@@ -78,26 +78,12 @@ void reset_msg(struct msg * m)
     m->syn = 0;
     m->seq = 0;
     m->cmd_t = 0;
+    m->endfile = 0;
     m->ecode = 0;
     m->ack_num = 0;
     m->data_size = 0;
     m->file_size = 0;
-    memset(m->data, 0, MAXSIZE + 1 - OFFS);
-}
-
-void print_msg(struct msg * m)
-{
-    printf("m.ack = %d\n"
-           "m.fin = %d\n"
-           "m.syn = %d\n"
-           "m.seq = %u\n"
-           "m.endfile = %u\n"
-           "m.cmd_t = %d\n"
-           "m.ecode = %d\n"
-           "m.ack_num = %u\n"
-           "m.data_size = %d\n"
-           "m.file_size = %d\n",
-           m->ack, m->fin, m->syn, m->seq, m->endfile, m->cmd_t, m->ecode, m->ack_num, m->data_size, m->file_size);
+    memset(m->data, 0, PAYLOAD_SIZE); //MAXSIZE + 1 - OFFS);
 }
 
 void send_ack(int sockfd, struct sockaddr_in * addr, unsigned int my_seq, unsigned int seq_to_ack)
@@ -111,7 +97,7 @@ void send_ack(int sockfd, struct sockaddr_in * addr, unsigned int my_seq, unsign
     m.ack_num = seq_to_ack;
     m.seq = my_seq;
     
-    check = sendto(sockfd, (void*) &m, MAXSIZE, 0, (struct sockaddr*) addr, addlen);
+    check = sendto(sockfd, (void*) &m, sizeof(struct msg), 0, (struct sockaddr*) addr, addlen);
     if(check < 0) {
         fprintf(stderr, "Error in sendto\n");
         exit(EXIT_FAILURE);
@@ -120,19 +106,6 @@ void send_ack(int sockfd, struct sockaddr_in * addr, unsigned int my_seq, unsign
     printf("Sending ack for message #%u with seq #%u\n", m.ack_num, m.seq);
 #endif    
     return;
-}
-
-int is_ack(struct msg * m, unsigned int myseq)
-{
-    /*
-     * Deprecated
-     */
-    
-    if(m->ack && m->ack_num == myseq) {
-        return 1;
-    }
-
-    return 0;
 }
 
 void print_queue(struct qnode * head)
@@ -147,11 +120,6 @@ void print_queue(struct qnode * head)
     
     printf("null\n\n");
     return;
-}
-
-int is_empty(struct qnode * head) 
-{
-    return head == NULL;
 }
 
 void insert_sorted(struct qnode ** headp, struct sockaddr_in * addr, struct msg * m, int index)
@@ -298,7 +266,7 @@ int queue_size(struct qnode * head)
     int i = 1;
     struct qnode * curr = head;
 
-    if(is_empty(head)) {
+    if(head == NULL) {
         return 0;
     }
     else {

@@ -12,12 +12,9 @@ struct qnode {
 
 char* read_line(void);
 char** split_line(char* line);
-void print_msg(struct msg * m);
 void reset_msg(struct msg * m);
 void send_ack(int sockfd, struct sockaddr_in * addr, unsigned int my_seq, unsigned int seq_to_ack);
-int is_ack(struct msg * m, unsigned int myseq);
 void print_queue(struct qnode * head);
-int is_empty(struct qnode * head);
 void insert_sorted(struct qnode ** headp, struct sockaddr_in * addr, struct msg * m, int index);
 int delete_node(struct qnode ** headp, struct msg * m);
 struct qnode * search_node_byseq(struct qnode * head, unsigned int seq);

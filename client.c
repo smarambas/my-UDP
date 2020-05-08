@@ -20,8 +20,8 @@
 #include "client.h"
 
 unsigned int myseq;
-unsigned int last_in_order;    //last packet in the correct order
-int sockfd, bsize = BUFF_SIZE, fd, first = 1, writing = 1;
+unsigned int last_in_order;    //seq of the last packet in the correct order
+int sockfd, bsize = BUFF_SIZE, fd, first = 1, writing = 1, closed = 0;
 struct sockaddr_in servaddr;
 int acked[N] = {0}; //array to report to sending threads that an ack is received
 int indexes[N] = {0};   //array of indexes
@@ -32,9 +32,11 @@ pthread_mutex_t order_mutex = PTHREAD_MUTEX_INITIALIZER; //to sync the ordered h
 pthread_mutex_t snd_mutex = PTHREAD_MUTEX_INITIALIZER;   //to sync the accesses to snd_queue
 pthread_mutex_t last_mutex = PTHREAD_MUTEX_INITIALIZER; //to sync the access to last_in_order
 pthread_mutex_t wr_mutex = PTHREAD_MUTEX_INITIALIZER;   //to sync writes on the file
+pthread_mutex_t close_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
 pthread_cond_t index_cond = PTHREAD_COND_INITIALIZER;
 pthread_cond_t wr_cond = PTHREAD_COND_INITIALIZER;
+pthread_cond_t close_cond = PTHREAD_COND_INITIALIZER;
 pthread_cond_t ack_cond[N];
 struct qnode * rec_queue = NULL;    //receiving queue
 char * global_buffer;    //buffer used by the handler threads
@@ -61,7 +63,7 @@ int open_connection()
                "Port\t%u\n\n", inet_ntoa(servaddr.sin_addr), ntohs(servaddr.sin_port));
 #endif
         //send SYN message
-        if((sendto(sockfd, (void*) &m, sizeof(struct msg) /*MAXSIZE*/, 0, (struct sockaddr *) &servaddr, addlen)) < 0) {
+        if((sendto(sockfd, (void*) &m, sizeof(struct msg), 0, (struct sockaddr *) &servaddr, addlen)) < 0) {
             fprintf(stderr, "Error in sendto\n");
             return -1;
         }
@@ -69,16 +71,18 @@ int open_connection()
         reset_msg(&m);
         
         //receive SYN-ACK
-        if((recvfrom(sockfd, (void*) &m, sizeof(struct msg) /*MAXSIZE*/, 0, (struct sockaddr *) &servaddr, &addlen)) < 0) {
+        if((recvfrom(sockfd, (void*) &m, sizeof(struct msg), 0, (struct sockaddr *) &servaddr, &addlen)) < 0) {
             fprintf(stderr, "Error in recvfrom\n");
             return -1;
         }
-        if(m.syn == 1 && is_ack(&m, myseq)) {
+        if(m.syn == 1 && m.ack == 1 && m.ack_num == myseq) {
             last_in_order = m.seq;
             reset_msg(&m);
             send_ack(sockfd, &servaddr, ++myseq, last_in_order);      
             printf("Connection established with server.\n");
+#ifdef debug            
             printf("myseq = %u\n\n", myseq);
+#endif            
             check = 1;
         } 
     }
@@ -354,20 +358,6 @@ void * msg_handler(void * args)
                     }
                     else if(msg_node->m->cmd_t == 2) { //answer to GET
                         if(msg_node->m->ecode == success) {
-                            /*
-                            blen = strlen(global_buffer);
-                            if(msg_node->m->data_size + blen >= BUFF_SIZE) {
-                                bsize += BUFF_SIZE;
-                                global_buffer = realloc(global_buffer, bsize);
-                                if(!global_buffer) {
-                                    perror("realloc");
-                                    exit(EXIT_FAILURE);
-                                }
-                            }
-                        
-                            strcat(global_buffer, msg_node->m->data);
-                            */
-                            
                             if(first) {
                                 strcat(new_file, req_file);
                                 fd = open(new_file, O_WRONLY | O_CREAT | O_TRUNC, 0666);
@@ -423,44 +413,6 @@ void * msg_handler(void * args)
                             writing = 0;
                             
                             pthread_cond_broadcast(&wr_cond);
-                            
-                            /*
-                            if(msg_node->m->endfile == 1) {
-                                writing = 1;
-                                strcat(new_file, req_file);
-                                fd = open(new_file, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-                                if(fd == -1) {
-                                    fprintf(stderr, "Error in open\n");
-                                    exit(EXIT_FAILURE);
-                                }
-                                
-                                blen = strlen(global_buffer);
-                                
-                                while(writing) {
-                                    check = write(fd, global_buffer, blen);
-                                    if(check == blen) {
-                                        close(fd);
-                                        printf("\nDownload finished.\n\n");
-                                        memset(new_file, 0, BUFF_SIZE);
-                                        strcat(new_file, "new_");
-                                        writing = 0;
-                                    }
-                                    else if(check != blen && check != -1) {
-                                        close(fd);
-                                        fd = open(new_file, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-                                        if(fd == -1) {
-                                            fprintf(stderr, "Error in open\n");
-                                            exit(EXIT_FAILURE);
-                                        }
-                                    }
-                                    else if(check == -1){
-                                        perror("write");
-                                        exit(EXIT_FAILURE);
-                                    }
-                                }
-                            
-                                memset(global_buffer, 0, bsize);
-                            }      */                  
                         }
                         else if(msg_node->m->ecode == clierror) {
                             printf("\nError: the file requested doesn't exist. Please, try again.\n\n");
@@ -471,6 +423,10 @@ void * msg_handler(void * args)
                     }
                     else if(msg_node->m->cmd_t == 3) { //answer to PUT
                         //
+                    }
+                    else if(msg_node->m->fin == 1) {    //close connection
+                        closed = 1;
+                        pthread_cond_signal(&close_cond);
                     }
                     
                     check = pthread_mutex_lock(&last_mutex);
@@ -533,21 +489,6 @@ void * msg_handler(void * args)
                     }
                     else if(msg_node->m->cmd_t == 2) { //answer to GET
                         if(msg_node->m->ecode == success) {
-                            /*
-                            blen = strlen(global_buffer);
-                            if(msg_node->m->data_size + blen >= BUFF_SIZE) {
-                                bsize += BUFF_SIZE;
-                                global_buffer = realloc(global_buffer, bsize);
-                                if(!global_buffer) {
-                                    perror("realloc");
-                                    exit(EXIT_FAILURE);
-                                }
-                            }
-                        
-                            strcat(global_buffer, msg_node->m->data);
-                            
-                            */
-                            
                             check = pthread_mutex_lock(&wr_mutex);
                             if(check != 0) {
                                 perror("pthread_mutex_lock");
@@ -558,24 +499,9 @@ void * msg_handler(void * args)
                                 check = pthread_cond_wait(&wr_cond, &wr_mutex);
                             }
                             
-                            /*
-                            while(writing) {
-                                //check = pthread_cond_wait(&wr_cond, &wr_mutex);
-                                gettimeofday(&now, NULL);
-                                time_to_wait.tv_sec = now.tv_sec + T;
-                                time_to_wait.tv_nsec = now.tv_usec * 1000UL;
-                                
-                                check = pthread_cond_timedwait(&wr_cond, &wr_mutex, &time_to_wait); //wait for the condition to become true
-                                if(check != 0 && check != ETIMEDOUT) {
-                                    perror("pthread_cond_timedwait");
-                                    exit(EXIT_FAILURE);
-                                }
-                            }
-                            
-                            lseek(fd, 0, SEEK_END);
-                            */
-                            
                             writing = 1;
+                            
+                            //lseek(fd, 0, SEEK_END);
 
                             check = write(fd, msg_node->m->data, msg_node->m->data_size);
                             if(check == -1) {
@@ -612,45 +538,6 @@ void * msg_handler(void * args)
                             writing = 0;
                             
                             pthread_cond_broadcast(&wr_cond);
-                            
-                            /*
-                                                                                    
-                            if(msg_node->m->endfile == 1) {
-                                writing = 1;
-                                strcat(new_file, req_file);
-                                fd = open(new_file, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-                                if(fd == -1) {
-                                    fprintf(stderr, "Error in open\n");
-                                    exit(EXIT_FAILURE);
-                                }
-                                
-                                blen = strlen(global_buffer);
-                                
-                                while(writing) {
-                                    check = write(fd, global_buffer, blen);
-                                    if(check == blen) {
-                                        close(fd);
-                                        printf("\nDownload finished.\n\n");
-                                        memset(new_file, 0, BUFF_SIZE);
-                                        strcat(new_file, "new_");
-                                        writing = 0;
-                                    }
-                                    else if(check != blen && check != -1) {
-                                        close(fd);
-                                        fd = open(new_file, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-                                        if(fd == -1) {
-                                            fprintf(stderr, "Error in open\n");
-                                            exit(EXIT_FAILURE);
-                                        }
-                                    }
-                                    else if(check == -1){
-                                        perror("write");
-                                        exit(EXIT_FAILURE);
-                                    }
-                                }
-                            
-                                memset(global_buffer, 0, bsize);
-                            }                        */
                         }
                         else if(msg_node->m->ecode == clierror) {
                             printf("\nError: the file requested doesn't exist. Please, try again.\n\n");
@@ -661,6 +548,10 @@ void * msg_handler(void * args)
                     }
                     else if(msg_node->m->cmd_t == 3) { //answer to PUT
                         //
+                    }
+                    else if(msg_node->m->fin == 1) {    //close connection
+                        closed = 1;
+                        pthread_cond_signal(&close_cond);
                     }
                     
                     check = pthread_mutex_lock(&last_mutex);
@@ -770,13 +661,13 @@ void * recv_answer(void * args)
     pthread_exit(NULL);
 }
 
-int send_cmd(struct qnode ** send_queue)
+void send_cmd(struct qnode ** send_queue)
 {
     /*
-     * Routine used by the client to send commands to the server and receive the answers
+     * Routine used by the client to send commands to the server
      */
 
-    int t;
+    int t, end = 0, check;
     char * cmd;
     int cmd_len;
     char ** tokens;
@@ -787,10 +678,15 @@ int send_cmd(struct qnode ** send_queue)
         fprintf(stderr, "Error in malloc\n");
         exit(EXIT_FAILURE);
     }
+    
+    printf("\nInsert one of the following request to the server:\n"
+                "1) list (print a list of the files)\n"
+                "2) get <filename> (download the expressed file)\n"
+                "3) post <filename> (upload the expressed file)\n"
+                "4) help\n"
+                "5) quit (close the connection and the program)\n\n\n");
 
-    //printf("$");
-    //fflush(stdout);
-    while(1) {
+    while(!end) {
         cmd = read_line();
         cmd_len = sizeof(cmd);
 
@@ -833,26 +729,61 @@ int send_cmd(struct qnode ** send_queue)
         }
         else if(strcmp(tokens[0], "post") == 0 && tokens[1] != NULL) {
             //*cmd_type = 3;
-            // manca la parte relativa al file da inviare
+            // send_file
         }
         else if(strcmp(tokens[0], "help") == 0) {
-            printf("\nInsert one of the following request for the server:\n"
-                "1) list (for a list of the files)\n"
-                "2) get <filename> (to download the expressed file)\n"
-                "3) post <filename> (to upload the expressed file)\n"
+            printf("\nInsert one of the following request to the server:\n"
+                "1) list (print a list of the files)\n"
+                "2) get <filename> (download the expressed file)\n"
+                "3) post <filename> (upload the expressed file)\n"
                 "4) help\n"
-                "5) quit (to close the connection and the program)\n\n");
+                "5) quit (close the connection and the program)\n\n");
         }
         else if(strcmp(tokens[0], "quit") == 0) {
-            //close connection
-            exit(EXIT_SUCCESS);
+            reset_msg(&m);
+            myseq += 1;
+            m.seq = myseq;
+            m.data_size = 1;
+            m.fin = 1;
+            
+            insert_sorted(send_queue, &servaddr, &m, -1);
+            
+            t = pthread_create(&s_tid[0], NULL, send_message, (void *) send_queue); //sending thread
+            if(t != 0) {
+                fprintf(stderr, "Error in pthread_create\n");
+                exit(EXIT_FAILURE);
+            }
+            
+            check = pthread_mutex_lock(&close_mutex);
+            if(check != 0) {
+                fprintf(stderr, "Error in pthread_mutex_lock\n");
+                exit(EXIT_FAILURE);
+            }
+            
+            while(!closed) {
+                check = pthread_cond_wait(&close_cond, &close_mutex);
+                if(check != 0) {
+                    fprintf(stderr, "Error in pthread_cond_wait\n");
+                    exit(EXIT_FAILURE);
+                }
+            }
+            
+            pthread_join(s_tid[0], NULL);
+            
+            check = pthread_mutex_unlock(&close_mutex);
+            if(check != 0) {
+                fprintf(stderr, "Error in pthread_mutex_unlock\n");
+                exit(EXIT_FAILURE);
+            }
+            
+            end = 1;
         }
         else {
-            printf("\nBad command, please try again.\n");
+            printf("\nBad command, please try again.\n\n");
         }
     }
 
-    return 0;
+    return;
 }
 
 int main(int argc, char** argv) 
