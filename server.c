@@ -311,7 +311,7 @@ int send_list(struct qnode ** send_queue)
         exit(EXIT_FAILURE);
     }
     
-    check = scandir(".", &filelist, 0, versionsort);
+    check = scandir("./server_files/", &filelist, 0, versionsort);
     if(check < 0) {
         perror("scandir");
         exit(EXIT_FAILURE);
@@ -392,8 +392,11 @@ void send_file(struct qnode ** send_queue, char * filename)
     int fd, i, t, check;
     unsigned int filesize, dim = 0, bsize = PAYLOAD_SIZE;    //MAXSIZE+1-OFFS;
     struct msg m;
+    char file[BUFF_SIZE] = "server_files/";
+    
+    strcat(file, filename);
 
-    fd = open(filename, O_RDONLY);
+    fd = open(file, O_RDONLY);
     if(fd == -1) {
         if(errno == ENOENT) {   //the file doesn't exist, send an error code
             reset_msg(&m);
@@ -474,6 +477,9 @@ void send_file(struct qnode ** send_queue, char * filename)
             }    
         }
     }
+    
+    memset(file, 0, BUFF_SIZE);
+    strcat(file, "server_files/");
 
     return;
 }
@@ -821,4 +827,3 @@ int main(int argc, char** argv)
 
     return 0;
 }
-

@@ -271,7 +271,7 @@ void * msg_handler(void * args)
     struct qnode ** snd_queue = (struct qnode **) args;
     struct qnode * node = NULL;
     struct qnode * msg_node = NULL;
-    char new_file [BUFF_SIZE] = "new_";
+    char new_file [BUFF_SIZE] = "client_files/";
     struct timespec time_to_wait;
     struct timeval now;
 
@@ -401,7 +401,7 @@ void * msg_handler(void * args)
                                 first = 1;
                                 printf("\nDownload finished.\n\n");
                                 memset(new_file, 0, BUFF_SIZE);
-                                strcat(new_file, "new_");
+                                strcat(new_file, "client_files/");
                             }
                             
                             check = pthread_mutex_unlock(&wr_mutex);
@@ -526,7 +526,7 @@ void * msg_handler(void * args)
                                 first = 1;
                                 printf("\nDownload finished.\n\n");
                                 memset(new_file, 0, BUFF_SIZE);
-                                strcat(new_file, "new_");
+                                strcat(new_file, "client_files/");
                             }
                             
                             check = pthread_mutex_unlock(&wr_mutex);
@@ -667,7 +667,7 @@ void send_cmd(struct qnode ** send_queue)
      * Routine used by the client to send commands to the server
      */
 
-    int t, end = 0, check;
+    int t, end = 0, check, width = 11;
     char * cmd;
     int cmd_len;
     char ** tokens;
@@ -680,11 +680,11 @@ void send_cmd(struct qnode ** send_queue)
     }
     
     printf("\nInsert one of the following request to the server:\n"
-                "1) list (print a list of the files)\n"
-                "2) get <filename> (download the expressed file)\n"
-                "3) post <filename> (upload the expressed file)\n"
+                "1) list\n"
+                "2) get <filename>\n"
+                "3) post <filename>\n"
                 "4) help\n"
-                "5) quit (close the connection and the program)\n\n\n");
+                "5) quit\n\n");
 
     while(!end) {
         cmd = read_line();
@@ -733,11 +733,11 @@ void send_cmd(struct qnode ** send_queue)
         }
         else if(strcmp(tokens[0], "help") == 0) {
             printf("\nInsert one of the following request to the server:\n"
-                "1) list (print a list of the files)\n"
-                "2) get <filename> (download the expressed file)\n"
-                "3) post <filename> (upload the expressed file)\n"
+                "1) list\n"
+                "2) get <filename>\n"
+                "3) post <filename>\n"
                 "4) help\n"
-                "5) quit (close the connection and the program)\n\n");
+                "5) quit\n\n");
         }
         else if(strcmp(tokens[0], "quit") == 0) {
             reset_msg(&m);
