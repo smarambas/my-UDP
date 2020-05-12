@@ -20,6 +20,7 @@ char* read_line(void)
 
     char* line = NULL;
     size_t bsize = 0;
+    
     if(getline(&line, &bsize, stdin) == -1)
     {
         fprintf(stderr, "ERROR: getline() call failed.\n");
@@ -36,8 +37,8 @@ char** split_line(char* line)
      */
 
     int bsize = TOK_BUF, position = 0;
-    char** tokens = malloc(bsize * sizeof(char*));
-    char* tok;
+    char ** tokens = malloc(bsize * sizeof(char*));
+    char * tok;
 
     if(!tokens)
     {
@@ -67,6 +68,7 @@ char** split_line(char* line)
 
         tok = strtok(NULL, TOK_DELIM);  //next argument
     }
+    
     tokens[position] = NULL;
     return tokens;
 }
@@ -97,14 +99,21 @@ void send_ack(int sockfd, struct sockaddr_in * addr, unsigned int my_seq, unsign
     m.ack_num = seq_to_ack;
     m.seq = my_seq;
     
-    check = sendto(sockfd, (void*) &m, sizeof(struct msg), 0, (struct sockaddr*) addr, addlen);
-    if(check < 0) {
-        fprintf(stderr, "Error in sendto\n");
-        exit(EXIT_FAILURE);
-    }
+    if(rand_value() > P) {
+        check = sendto(sockfd, (void*) &m, sizeof(struct msg), 0, (struct sockaddr*) addr, addlen);
+        if(check < 0) {
+            fprintf(stderr, "Error in sendto\n");
+            exit(EXIT_FAILURE);
+        }
 #ifdef debug
-    printf("Sending ack for message #%u with seq #%u\n", m.ack_num, m.seq);
+        printf("Sending ack for message #%u with seq #%u\n", m.ack_num, m.seq);
 #endif    
+    }
+    else {
+#ifdef debug 
+        printf("Ack for message #%u with seq #%u lost\n", m.ack_num, m.seq);
+#endif        
+    }
     return;
 }
 
@@ -125,7 +134,7 @@ void print_queue(struct qnode * head)
 void insert_sorted(struct qnode ** headp, struct sockaddr_in * addr, struct msg * m, int index)
 {
     /*
-     * Insert a new node in the queue, sorted by the sequence number of the message
+     * Insert a new node in the queue, sorted by the sequence number of the message, ignoring the duplicates
      */
     
     struct qnode * curr = *headp;
@@ -156,15 +165,23 @@ void insert_sorted(struct qnode ** headp, struct sockaddr_in * addr, struct msg 
         curr = curr->next;
     }
 
-    if(prev == NULL) {
+    if(prev == NULL && curr == NULL) {  //empty list
         new->next = *headp;
         *headp = new;
     }
-    else {
+    else if(prev == NULL && curr != NULL && curr->m->seq != m->seq) {   //head of the list
+        new->next = *headp;
+        *headp = new;
+    }
+    else if(prev != NULL && curr == NULL) { //end of the list
         prev->next = new;
         new->next = curr;
     }
-
+    else if(prev != NULL && curr != NULL && prev->m->seq != m->seq && curr->m->seq != m->seq) {
+        prev->next = new;
+        new->next = curr;
+    }
+    
     return;
 }
 
@@ -228,23 +245,7 @@ struct qnode * search_node_byseq(struct qnode * head, unsigned int seq)
     return curr;
 }
 
-struct qnode * search_node_byindex(struct qnode * head, int i)
-{
-    struct qnode * curr = head;
-    
-    while(curr != NULL) {
-        if(curr->index == i) {
-            break;
-        }
-        else {
-            curr = curr->next;
-        }
-    }
-
-    return curr;
-}
-
-struct qnode * search_node_to_send(struct qnode ** headp, int i)
+struct qnode * search_node_to_serve(struct qnode ** headp, int i)
 {
     struct qnode * curr = *headp;
 
@@ -299,4 +300,9 @@ void str_cut(char * str, int begin, int len)
 
     memmove(str + begin, str + begin + len, slen - len + 1);
     return;
+}
+
+double rand_value(void)
+{
+    return (double) rand() / RAND_MAX;
 }

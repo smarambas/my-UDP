@@ -27,4 +27,4 @@ server: server.o common.o myUDP.h
 	$(CC) $(CFLAGS) server.o common.o -o $@ -pthread -lm
 
 clean:
-	rm -f client server client.o server.o common.o client_files/*
+	rm -f client server client.o server.o common.o files_client/*.txt
