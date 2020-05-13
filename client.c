@@ -29,6 +29,8 @@
 
 #endif
 
+struct timespec T  = {1, 0};    //timeout
+
 unsigned long myseq;
 unsigned long expected_seq = 0;   //next expected sequence number
 int sockfd, bsize = BUFF_SIZE, fd, first_open = 1, closed = 0, opened = 0;
@@ -128,11 +130,11 @@ void open_connection(struct qnode ** send_queue)
 void * send_message(void * args)
 {
     int i = -1, j, check = 0;
-    unsigned long timeout;
     struct qnode ** snd_queue = (struct qnode **) args;
     struct qnode * node = NULL;
     struct msg m;
     socklen_t addlen;
+    struct timespec timeout;
     struct timespec time_to_wait;
     struct timeval now;
 
@@ -230,8 +232,8 @@ void * send_message(void * args)
         
         while(!acked[i]) {
             gettimeofday(&now, NULL);
-            time_to_wait.tv_sec = now.tv_sec + timeout;
-            time_to_wait.tv_nsec = now.tv_usec * 1000UL;
+            time_to_wait.tv_sec = now.tv_sec + timeout.tv_sec;
+            time_to_wait.tv_nsec = now.tv_usec * 1000UL + timeout.tv_nsec;
             
             check = pthread_cond_timedwait(&ack_cond[i], &mutexes[i], &time_to_wait);
             if(check != 0) {
@@ -244,7 +246,6 @@ void * send_message(void * args)
                             exit(EXIT_FAILURE);
                         }
                         
-                        //timeout = 2 * timeout;
 #ifdef debug
                         printf("Message sent to server with seq #%u (rx)\n", m.seq);
 #endif
@@ -519,14 +520,15 @@ void * msg_handler(void * args)
                     }
                     else if(msg_node->m->ecode == serverror) {
                         printf("\nError: the server couldn't send the requested file because a critical error occurred.\n\n");
+                        exit(EXIT_FAILURE);
                     }
                 }
                 else if(msg_node->m->cmd_t == 3) { //answer to PUT
                     if(msg_node->m->ecode == success) {
-                        printf("File uploaded correctly!\n");
+                        printf("File uploaded correctly!\n\n");
                     }
                     else {
-                        printf("Error: the upload failed.\n");
+                        printf("Error: the upload failed.\n\n");
                         closed = 1;
                         pthread_cond_signal(&close_cond);
                     }

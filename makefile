@@ -20,7 +20,7 @@ server.o: server.c server.h
 common.o: common.c common.h
 	$(CC) $(CFLAGS) common.c -c
 
-client: client.o common.o myUDP.h
+client: client.o common.o myUDP.h 
 	$(CC) $(CFLAGS) client.o common.o -o $@ -pthread -lm
 
 server: server.o common.o myUDP.h

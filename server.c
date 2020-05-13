@@ -22,6 +22,8 @@
 #include "common.h"
 #include "server.h"
 
+struct timespec T  = {1, 0};    //timeout
+
 unsigned long myseq;
 unsigned long expected_seq = 0;  //next expected sequence number
 int connsd, fd, closed = 0, opened = 0, end = 0, first_open = 1;  
@@ -124,11 +126,11 @@ void complete_handshake(unsigned long * cliseq, struct qnode ** send_queue)
 void * send_message(void * args)
 {
     int i = -1, j, check = 0;
-    unsigned long timeout;
     struct qnode ** snd_queue = (struct qnode **) args;
     struct qnode * node = NULL;
     struct msg m;
     socklen_t addlen;
+    struct timespec timeout;
     struct timespec time_to_wait;
     struct timeval now;
 
@@ -226,8 +228,8 @@ void * send_message(void * args)
         
         while(!acked[i]) {
             gettimeofday(&now, NULL);
-            time_to_wait.tv_sec = now.tv_sec + timeout;
-            time_to_wait.tv_nsec = now.tv_usec * 1000UL;
+            time_to_wait.tv_sec = now.tv_sec + timeout.tv_sec;
+            time_to_wait.tv_nsec = now.tv_usec * 1000UL + timeout.tv_nsec;
             
             check = pthread_cond_timedwait(&ack_cond[i], &mutexes[i], &time_to_wait);
             if(check != 0) {
@@ -240,7 +242,6 @@ void * send_message(void * args)
                             exit(EXIT_FAILURE);
                         }
                         
-                        //timeout = 2 * timeout;
 #ifdef debug
                         printf("Message sent to server with seq #%u (rx)\n", m.seq);
 #endif
