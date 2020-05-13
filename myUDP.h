@@ -1,11 +1,15 @@
 #ifndef MYUDP_H
 #define MYUDP_H
 
-#define PAYLOAD_SIZE    512
+#define PAYLOAD_SIZE                512
 
-#define N               10           //window width
-#define P               0.1        //probability of losing a packet
-//#define T               1.0         
+#define N                           10           //window width
+#define P                           0.2        //probability of losing a packet    
+
+#define ALFA                        0.125
+#define BETA                        0.25
+
+#define MAX_TIMEOUT_INTERVAL        120   
 
 struct msg {
     char syn;

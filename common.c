@@ -106,12 +106,12 @@ void send_ack(int sockfd, struct sockaddr_in * addr, unsigned long my_seq, unsig
             fprintf(stderr, "Error in sendto\n");
             exit(EXIT_FAILURE);
         }
-#ifdef debug
+#ifdef verbose
         printf("Sending ack for message #%u with seq #%u\n", m.ack_num, m.seq);
 #endif    
     }
     else {
-#ifdef debug 
+#ifdef verbose 
         printf("Ack for message #%u with seq #%u lost\n", m.ack_num, m.seq);
 #endif        
     }
@@ -281,12 +281,18 @@ int queue_size(struct qnode * head)
     }
 }
 
-double get_elapsed_time(struct timespec * start, struct timespec * end)
+void get_elapsed_time(struct timespec * start, struct timespec * end, struct timespec * sample)
 {
-    
+    /*
     double delta_s = end->tv_sec - start->tv_sec;
     double delta_ns = end->tv_nsec - start->tv_nsec;
     return delta_s + delta_ns * 1e-9;    
+    */
+    
+    sample->tv_sec = end->tv_sec - start->tv_sec;
+    sample->tv_nsec = end->tv_nsec - start->tv_nsec;
+    
+    return;
 }
 
 void str_cut(char * str, int begin, int len)

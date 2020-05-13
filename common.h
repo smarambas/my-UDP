@@ -1,7 +1,8 @@
 #ifndef COMMON_H
 #define COMMON_H
 
-#define BUFF_SIZE    4096
+#define BUFF_SIZE       4096
+#define BILLION         1000000000
 
 struct qnode {  
     struct sockaddr_in * addr;
@@ -21,7 +22,7 @@ struct qnode * search_node_byseq(struct qnode * head, unsigned long seq);
 struct qnode * search_node_to_serve(struct qnode ** head, int i);
 struct qnode * pop_first(struct qnode ** headp);
 int queue_size(struct qnode * head);
-double get_elapsed_time(struct timespec * start, struct timespec * end);
+void get_elapsed_time(struct timespec * start, struct timespec * end, struct timespec * sample);
 void str_cut(char * str, int begin, int len);
 double rand_value(void);
 void sigint_handler(int dummy);

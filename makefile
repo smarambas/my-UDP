@@ -1,15 +1,29 @@
 CC=gcc
 CFLAGS=-O3
-CPPFLAGS=-D debug
+CPPFLAGS=-D
 
 all: client server
 
-debug: client.c client.h server.c server.h common.c common.h myUDP.h 
-	$(CC) $(CFLAGS) $(CPPFLAGS) client.c -c 
-	$(CC) $(CFLAGS) $(CPPFLAGS) server.c -c 
-	$(CC) $(CFLAGS) $(CPPFLAGS) common.c -c 
-	$(CC) $(CFLAGS) $(CPPFLAGS) client.o common.o -o client -pthread -lm 
-	$(CC) $(CFLAGS) $(CPPFLAGS) server.o common.o -o server -pthread -lm 
+verbose: client.c client.h server.c server.h common.c common.h myUDP.h 
+	$(CC) $(CFLAGS) $(CPPFLAGS) $@ client.c -c 
+	$(CC) $(CFLAGS) $(CPPFLAGS) $@ server.c -c 
+	$(CC) $(CFLAGS) $(CPPFLAGS) $@ common.c -c 
+	$(CC) $(CFLAGS) $(CPPFLAGS) $@ client.o common.o -o client -pthread -lm 
+	$(CC) $(CFLAGS) $(CPPFLAGS) $@ server.o common.o -o server -pthread -lm 
+
+adaptive: client.c client.h server.c server.h common.c common.h myUDP.h
+	$(CC) $(CFLAGS) $(CPPFLAGS) $@ client.c -c 
+	$(CC) $(CFLAGS) $(CPPFLAGS) $@ server.c -c 
+	$(CC) $(CFLAGS) $(CPPFLAGS) $@ common.c -c 
+	$(CC) $(CFLAGS) $(CPPFLAGS) $@ client.o common.o -o client -pthread -lm 
+	$(CC) $(CFLAGS) $(CPPFLAGS) $@ server.o common.o -o server -pthread -lm 
+
+hybrid: client.c client.h server.c server.h common.c common.h myUDP.h
+	$(CC) $(CFLAGS) $(CPPFLAGS) verbose $(CPPFLAGS) adaptive client.c -c 
+	$(CC) $(CFLAGS) $(CPPFLAGS) verbose $(CPPFLAGS) adaptive server.c -c 
+	$(CC) $(CFLAGS) $(CPPFLAGS) verbose $(CPPFLAGS) adaptive common.c -c 
+	$(CC) $(CFLAGS) $(CPPFLAGS) verbose $(CPPFLAGS) adaptive client.o common.o -o client -pthread -lm 
+	$(CC) $(CFLAGS) $(CPPFLAGS) verbose $(CPPFLAGS) adaptive server.o common.o -o server -pthread -lm 
 
 client.o: client.c client.h 
 	$(CC) $(CFLAGS) client.c -c
