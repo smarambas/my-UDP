@@ -963,6 +963,8 @@ int main(int argc, char** argv)
     struct sockaddr_in servaddr;
     struct qnode * s_head = NULL;   //send queue
     pid_t pid;
+    struct sigaction act;
+    sigset_t set;
     
     if(argc != 2) {
         fprintf(stderr, "Usage: ./server <port>\n");
@@ -989,6 +991,16 @@ int main(int argc, char** argv)
 
     if(bind(listensd, (struct sockaddr*) &servaddr, sizeof(servaddr)) < 0) {
         perror("Error in bind");
+        exit(EXIT_FAILURE);
+    }
+    
+    sigfillset(&set);
+    act.sa_handler = sigint_handler;
+    act.sa_mask = set;
+    act.sa_flags = 0;
+    check = sigaction(SIGINT, &act, NULL);
+    if(check == -1) {
+        perror("sigaction");
         exit(EXIT_FAILURE);
     }
     

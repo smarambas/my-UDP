@@ -283,6 +283,7 @@ int queue_size(struct qnode * head)
 
 double get_elapsed_time(struct timespec * start, struct timespec * end)
 {
+    
     double delta_s = end->tv_sec - start->tv_sec;
     double delta_ns = end->tv_nsec - start->tv_nsec;
     return delta_s + delta_ns * 1e-9;    
@@ -306,4 +307,10 @@ void str_cut(char * str, int begin, int len)
 double rand_value(void)
 {
     return (double) rand() / RAND_MAX;
+}
+
+void sigint_handler(int dummy)
+{
+    printf("\nShutting down...\n");
+    exit(EXIT_SUCCESS);
 }

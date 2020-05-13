@@ -24,5 +24,6 @@ int queue_size(struct qnode * head);
 double get_elapsed_time(struct timespec * start, struct timespec * end);
 void str_cut(char * str, int begin, int len);
 double rand_value(void);
+void sigint_handler(int dummy);
 
 #endif

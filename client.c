@@ -22,6 +22,13 @@
 #include "common.h"
 #include "client.h"
 
+#ifdef adaptive
+
+#define alfa    0.125
+#define beta    0.25
+
+#endif
+
 unsigned long myseq;
 unsigned long expected_seq = 0;   //next expected sequence number
 int sockfd, bsize = BUFF_SIZE, fd, first_open = 1, closed = 0, opened = 0;
@@ -824,6 +831,18 @@ void send_cmd(struct qnode ** send_queue)
     char ** tokens;
     struct msg m;
     struct timespec time_to_wait;
+    struct sigaction act;
+    sigset_t set;
+    
+    sigfillset(&set);
+    act.sa_handler = sigint_handler;
+    act.sa_mask = set;
+    act.sa_flags = 0;
+    check = sigaction(SIGINT, &act, NULL);
+    if(check == -1) {
+        perror("sigaction");
+        exit(EXIT_FAILURE);
+    }
 
     pthread_t * s_tid = (pthread_t *) malloc(N * sizeof(pthread_t));    //sendig threads
     if(!s_tid) {
