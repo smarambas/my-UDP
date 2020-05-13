@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,9 +22,9 @@
 #include "common.h"
 #include "server.h"
 
-unsigned int myseq;
-unsigned int expected_seq = 0;  //next expected sequence number
-int connsd, filed, closed = 0, opened = 0, end = 0;  //file descriptor
+unsigned long myseq;
+unsigned long expected_seq = 0;  //next expected sequence number
+int connsd, filed, closed = 0, opened = 0, end = 0;  
 struct sockaddr_in cliaddr;
 struct qnode * rec_queue = NULL;    //receiving queue
 struct qnode * send_base = NULL;    //pointer to the first element of the sending window
@@ -44,7 +45,7 @@ pthread_cond_t sb_cond = PTHREAD_COND_INITIALIZER;
 pthread_cond_t ack_cond[N];
 pthread_t * s_tid;  //array of sending threads
 
-int accept_connection(int listensd, struct sockaddr_in * cliaddr, unsigned int * cliseq)
+int accept_connection(int listensd, struct sockaddr_in * cliaddr, unsigned long * cliseq)
 {
     /*
      * The server wait for a SYN message and create a new socket for the connection
@@ -88,7 +89,7 @@ int accept_connection(int listensd, struct sockaddr_in * cliaddr, unsigned int *
     return sd;
 }
 
-void complete_handshake(unsigned int * cliseq, struct qnode ** send_queue)
+void complete_handshake(unsigned long * cliseq, struct qnode ** send_queue)
 {
     /*
      * The server send a SYN-ACK to the client and wait for an answer to establish a connection
@@ -120,7 +121,7 @@ void complete_handshake(unsigned int * cliseq, struct qnode ** send_queue)
 void * send_message(void * args)
 {
     int i = -1, j, check = 0;
-    unsigned int timeout;
+    unsigned long timeout;
     struct qnode ** snd_queue = (struct qnode **) args;
     struct qnode * node = NULL;
     struct msg m;
@@ -190,7 +191,7 @@ void * send_message(void * args)
     
     while(node != NULL) {
 #ifdef debug
-        printf("Thread %u sending msg #%u\n", (unsigned int) pthread_self(), node->m->seq);
+        printf("Thread %u sending msg #%u\n", (unsigned long) pthread_self(), node->m->seq);
 #endif
         timeout = T;
         
@@ -205,7 +206,7 @@ void * send_message(void * args)
                 exit(EXIT_FAILURE);
             }        
 #ifdef debug
-        printf("Message sent to server with seq #%u (tx)\n", m.seq);
+            printf("Message sent to server with seq #%u (tx)\n", m.seq);
 #endif
         }
         else {
@@ -323,7 +324,7 @@ void * send_message(void * args)
 void send_list(struct qnode ** send_queue)
 {
     char * buff;    //the list to send
-    unsigned int bsize = PAYLOAD_SIZE; 
+    unsigned long bsize = PAYLOAD_SIZE; 
     size_t blen = 0;
     struct msg m;
     int t, dim, i, sizetocpy, check, first = 1;
@@ -426,7 +427,7 @@ void send_list(struct qnode ** send_queue)
 void send_file(struct qnode ** send_queue, char * filename)
 {
     int fd, i, t, check, first = 1;
-    unsigned int filesize, dim = 0, bsize = PAYLOAD_SIZE;    //MAXSIZE+1-OFFS;
+    unsigned long filesize, dim = 0, bsize = PAYLOAD_SIZE;    
     struct msg m;
     char file[BUFF_SIZE] = "files_server/";
     
@@ -477,7 +478,7 @@ void send_file(struct qnode ** send_queue, char * filename)
         }
     }
 
-    filesize = (unsigned int) lseek(fd, 0, SEEK_END);
+    filesize = (unsigned long) lseek(fd, 0, SEEK_END);
     lseek(fd, 0, SEEK_SET);
     
     do {
@@ -609,22 +610,7 @@ void * msg_handler(void * args)
                 if(node != NULL) {              //if there is a node in the queue with the correct sequence
                     acked[node->index] = 1;     //report to the sending thread that the message is acked
                     
-                    pthread_cond_signal(&ack_cond[node->index]);
-/*                    
-                    check = pthread_mutex_lock(&exp_mutex);
-                    if(check != 0) {
-                        perror("pthread_mutex_lock");
-                        exit(EXIT_FAILURE);
-                    }
-                    
-                    expected_seq += 1;
-                    
-                    check = pthread_mutex_unlock(&exp_mutex);
-                    if(check != 0) {
-                        perror("pthread_mutex_unlock");
-                        exit(EXIT_FAILURE);
-                    }
-*/                    
+                    pthread_cond_signal(&ack_cond[node->index]);          
 #ifdef debug
                     printf("Ack received for message #%u\n", msg_node->m->ack_num);
 #endif
@@ -735,7 +721,7 @@ void recv_msg(struct qnode ** send_queue)
     struct msg m;
     socklen_t addlen = sizeof(cliaddr);
     fd_set rset;
-    //struct timeval tv = {T, 0};
+    struct timeval tv = {10, 0};
     
     pthread_t * h_tid = (pthread_t *) malloc(N * sizeof(pthread_t));    //msg handler threads
     if(!h_tid) {
@@ -762,8 +748,8 @@ void recv_msg(struct qnode ** send_queue)
     while(!end) {
         FD_SET(connsd, &rset);
         
-        //check = select(connsd+1, &rset, NULL, NULL, &tv);
-        check = select(connsd+1, &rset, NULL, NULL, NULL);
+        //check = select(connsd+1, &rset, NULL, NULL, NULL);
+        check = select(connsd+1, &rset, NULL, NULL, &tv);
         if(check < 0) {
             perror("select");
             exit(EXIT_FAILURE);
@@ -812,7 +798,7 @@ void recv_msg(struct qnode ** send_queue)
 int main(int argc, char** argv)
 {
     int listensd, port, check = 0;
-    unsigned int cliseq;
+    unsigned long cliseq;
     struct sockaddr_in servaddr;
     struct qnode * s_head = NULL;   //send queue
     pid_t pid;
@@ -855,7 +841,7 @@ int main(int argc, char** argv)
         else if(pid == 0) {     //child process
             close(listensd);    //close the listening socket  
             srand(pthread_self());  // + ntohs((cliaddr).sin_port));
-            myseq = (1 + rand()) % RAND_MAX;
+            myseq = 1 + rand();
             
             for(int i = 0; i < N; i++) {
                 check = pthread_mutex_init(&mutexes[i], NULL);

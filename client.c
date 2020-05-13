@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,8 +22,8 @@
 #include "common.h"
 #include "client.h"
 
-unsigned int myseq;
-unsigned int expected_seq = 0;   //next expected sequence number
+unsigned long myseq;
+unsigned long expected_seq = 0;   //next expected sequence number
 int sockfd, bsize = BUFF_SIZE, fd, first_open = 1, closed = 0, opened = 0;
 struct sockaddr_in servaddr;
 struct qnode * rec_queue = NULL;    //receiving queue
@@ -98,7 +99,7 @@ void open_connection(struct qnode ** send_queue)
             exit(EXIT_FAILURE);
         }
         else if(check == ETIMEDOUT) {
-            printf("The server is unreachable right now, try again later\n\n");
+            printf("The server is unreachable right now, try again later.\n\n");
             exit(EXIT_FAILURE);
         }
     }
@@ -120,7 +121,7 @@ void open_connection(struct qnode ** send_queue)
 void * send_message(void * args)
 {
     int i = -1, j, check = 0;
-    unsigned int timeout;
+    unsigned long timeout;
     struct qnode ** snd_queue = (struct qnode **) args;
     struct qnode * node = NULL;
     struct msg m;
@@ -190,7 +191,7 @@ void * send_message(void * args)
     
     while(node != NULL) { 
 #ifdef debug
-        printf("Thread %u sending msg #%u\n", (unsigned int) pthread_self(), node->m->seq);
+        printf("Thread %u sending msg #%u\n", (unsigned long) pthread_self(), node->m->seq);
 #endif
         timeout = T;
         
@@ -205,7 +206,7 @@ void * send_message(void * args)
                 exit(EXIT_FAILURE);
             }        
 #ifdef debug
-        printf("Message sent to server with seq #%u (tx)\n", m.seq);
+            printf("Message sent to server with seq #%u (tx)\n", m.seq);
 #endif
         }
         else {
@@ -272,13 +273,7 @@ void * send_message(void * args)
         }
         
         send_base = send_base->next;        
-        
         delete_node(snd_queue, &m);
-        
-#ifdef debug
-        //printf("Thread %u: Deleting message with seq #%u\n", pthread_self(), m.seq);
-        //print_queue(*snd_queue);
-#endif                 
         node = search_node_to_serve(snd_queue, i);
         
         check = pthread_mutex_unlock(&snd_mutex);
@@ -386,22 +381,7 @@ void * msg_handler(void * args)
                 if(node != NULL) {              //if there is a node in the queue with the correct sequence
                     acked[node->index] = 1;     //report to the sending thread that the message is acked
                     
-                    pthread_cond_signal(&ack_cond[node->index]);
-/*                    
-                    check = pthread_mutex_lock(&exp_mutex);
-                    if(check != 0) {
-                        perror("pthread_mutex_lock");
-                        exit(EXIT_FAILURE);
-                    }
-                    
-                    expected_seq += 1;
-                    
-                    check = pthread_mutex_unlock(&exp_mutex);
-                    if(check != 0) {
-                        perror("pthread_mutex_unlock");
-                        exit(EXIT_FAILURE);
-                    }
-*/                    
+                    pthread_cond_signal(&ack_cond[node->index]);                
 #ifdef debug
                     printf("Ack received for message #%u\n", msg_node->m->ack_num);
 #endif
@@ -823,7 +803,7 @@ void send_cmd(struct qnode ** send_queue)
                 "- help\n"
                 "- quit\n\n");
         }
-        else if(strcmp(tokens[0], "quit") == 0) {
+        else if(strcmp(tokens[0], "quit") == 0) {   //close connection
             reset_msg(&m);
             myseq += 1;
             m.seq = myseq;
@@ -910,7 +890,7 @@ int main(int argc, char** argv)
     }
 
     srand(pthread_self());
-    myseq = (1 + rand()) % RAND_MAX;   //choose a random sequence number
+    myseq = 1 + rand();   //choose a random sequence number
     
     t = pthread_create(&r_tid, NULL, recv_msg, (void *) &s_head);  //receiving thread
     if(t != 0) {

@@ -88,7 +88,7 @@ void reset_msg(struct msg * m)
     memset(m->data, 0, PAYLOAD_SIZE); //MAXSIZE + 1 - OFFS);
 }
 
-void send_ack(int sockfd, struct sockaddr_in * addr, unsigned int my_seq, unsigned int seq_to_ack)
+void send_ack(int sockfd, struct sockaddr_in * addr, unsigned long my_seq, unsigned long seq_to_ack)
 {
     int check;
     struct msg m;
@@ -229,7 +229,7 @@ struct qnode * pop_first(struct qnode ** headp)
     }
 }
 
-struct qnode * search_node_byseq(struct qnode * head, unsigned int seq)
+struct qnode * search_node_byseq(struct qnode * head, unsigned long seq)
 {
     struct qnode * curr = head;
 
