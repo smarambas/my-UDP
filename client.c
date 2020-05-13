@@ -369,7 +369,7 @@ void * msg_handler(void * args)
             printf("Handler %d got msg #%d\n", i, msg_node->m->seq);
 #endif            
 
-            if(msg_node->m->startfile == 1) {   // || (expected_seq - 1 + msg_node->m->data_size) == msg_node->m->seq) {
+            if(msg_node->m->startfile == 1) {   
                 rec_base = 1;                
             }
             else {
@@ -477,9 +477,7 @@ void * msg_handler(void * args)
                             perror("pthread_mutex_lock");
                             exit(EXIT_FAILURE);
                         }
-                        
-                        //lseek(fd, 0, SEEK_END);
-                        
+                                                
                         check = write(fd, msg_node->m->data, msg_node->m->data_size);
                         if(check == -1) {
                             perror("write");
@@ -500,7 +498,7 @@ void * msg_handler(void * args)
                         
                         if(msg_node->m->endfile == 1) {
                             close(fd);
-                            printf("\nDownload finished.\n\n");
+                            printf("\nDownload completed!\n\n");
                         }
                         
                         check = pthread_mutex_unlock(&wr_mutex);
@@ -517,7 +515,14 @@ void * msg_handler(void * args)
                     }
                 }
                 else if(msg_node->m->cmd_t == 3) { //answer to PUT
-                    //
+                    if(msg_node->m->ecode == success) {
+                        printf("File uploaded correctly!\n");
+                    }
+                    else {
+                        printf("Error: the upload failed.\n");
+                        closed = 1;
+                        pthread_cond_signal(&close_cond);
+                    }
                 }
                 else if(msg_node->m->fin == 1) {    //close connection
                     closed = 1;
@@ -711,6 +716,102 @@ void print_mylist(void)
     return;
 }
 
+void send_file(struct qnode ** send_queue, char * filename)
+{
+    int fd, i, t, check;
+    unsigned long filesize, dim = 0, bsize = PAYLOAD_SIZE;    
+    struct msg m;
+    char file[BUFF_SIZE] = "files_client/";
+    pthread_t * s_tid = (pthread_t *) malloc(N * sizeof(pthread_t));
+    
+    strcat(file, filename);
+
+    fd = open(file, O_RDONLY);
+    if(fd == -1) {
+        if(errno == ENOENT) {
+            printf("The file to send doesn't exist.\n");
+            return;
+        }
+        else {
+            perror("open");
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    filesize = (unsigned long) lseek(fd, 0, SEEK_END);
+    lseek(fd, 0, SEEK_SET);
+    
+    //send also the name of the file
+    reset_msg(&m);
+    m.startfile = 1;
+    myseq += strlen(filename);
+    m.seq = myseq;
+    m.file_size = filesize + strlen(filename);
+    m.cmd_t = 3;
+    memcpy(m.data, filename, strlen(filename));
+    
+    insert_sorted(send_queue, &servaddr, &m, -1);
+    
+#ifdef debug
+        printf("Inserted message with seq #%d in the queue\n", m.seq);
+        print_queue(*send_queue);
+#endif    
+    
+    do {
+        reset_msg(&m);
+        
+        if((filesize - dim) <= bsize) {
+            bsize = filesize - dim;
+            m.endfile = 1;
+        }
+        else {
+            m.endfile = 0;
+        }
+        
+        check = read(fd, m.data, bsize);
+        while(check != bsize) {
+            printf("Error: read less bytes\n");
+            if(check < 0) {
+                fprintf(stderr, "Error in read\n");
+                exit(EXIT_FAILURE);
+            }
+            lseek(fd, -check, SEEK_CUR);
+            memset(m.data, 0, PAYLOAD_SIZE);
+            check = read(fd, m.data, bsize);
+        }
+                
+        myseq += check;
+        m.seq = myseq;
+        m.startfile = 0;
+        m.data_size = (unsigned long) check;
+        m.file_size = filesize + strlen(filename);
+        m.cmd_t = 3;
+        //m.ecode = success;        
+                
+        insert_sorted(send_queue, &servaddr, &m, -1);
+#ifdef debug
+        printf("Inserted message with seq #%d in the queue\n", m.seq);
+        print_queue(*send_queue);
+#endif
+        dim += check;
+    }
+    while(dim < filesize);
+    
+    send_base = *send_queue;
+
+    for(i = 0; i < N; i++) {
+        if(i < queue_size(*send_queue)) {
+            t = pthread_create(&s_tid[i], NULL, send_message, (void *) send_queue);
+            if(t != 0) {
+                fprintf(stderr, "Error in pthread_create\n");
+                exit(EXIT_FAILURE);
+            }    
+        }
+    }
+    
+    return;
+}
+
 void send_cmd(struct qnode ** send_queue)
 {
     /*
@@ -730,7 +831,7 @@ void send_cmd(struct qnode ** send_queue)
         exit(EXIT_FAILURE);
     }
     
-    printf("\nInsert one of the following request to the server:\n"
+    printf("\nInsert one of the following requests to the server:\n"
                 "- list\n"
                 "- get <filename>\n"
                 "- post <filename>\n"
@@ -788,14 +889,13 @@ void send_cmd(struct qnode ** send_queue)
             }
         }
         else if(strcmp(tokens[0], "post") == 0 && tokens[1] != NULL) {
-            //*cmd_type = 3;
-            // send_file
+            send_file(send_queue, tokens[1]);
         }
         else if(strcmp(tokens[0], "mylist") == 0) {
             print_mylist();
         }
         else if(strcmp(tokens[0], "help") == 0) {
-            printf("\nInsert one of the following request to the server:\n"
+            printf("\nInsert one of the following requests to the server:\n"
                 "- list\n"
                 "- get <filename>\n"
                 "- post <filename>\n"

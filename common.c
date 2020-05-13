@@ -80,12 +80,13 @@ void reset_msg(struct msg * m)
     m->syn = 0;
     m->seq = 0;
     m->cmd_t = 0;
+    m->startfile = 0;
     m->endfile = 0;
     m->ecode = 0;
     m->ack_num = 0;
     m->data_size = 0;
     m->file_size = 0;
-    memset(m->data, 0, PAYLOAD_SIZE); //MAXSIZE + 1 - OFFS);
+    memset(m->data, 0, PAYLOAD_SIZE);
 }
 
 void send_ack(int sockfd, struct sockaddr_in * addr, unsigned long my_seq, unsigned long seq_to_ack)

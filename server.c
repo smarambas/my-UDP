@@ -24,13 +24,14 @@
 
 unsigned long myseq;
 unsigned long expected_seq = 0;  //next expected sequence number
-int connsd, filed, closed = 0, opened = 0, end = 0;  
+int connsd, fd, closed = 0, opened = 0, end = 0, first_open = 1;  
 struct sockaddr_in cliaddr;
 struct qnode * rec_queue = NULL;    //receiving queue
 struct qnode * send_base = NULL;    //pointer to the first element of the sending window
 int acked[N] = {0}; //array to report to sending threads that an ack is received
 int snd_indexes[N] = {0};   //array of snd_indexes
 int rcv_indexes[N] = {0};   //array of indexes for the receiving threads
+char new_file[BUFF_SIZE] = {0};
 pthread_mutex_t index_mutex = PTHREAD_MUTEX_INITIALIZER;    //to sync the index choice between threads
 pthread_mutex_t rec_index_mutex = PTHREAD_MUTEX_INITIALIZER;    //to sync the index choice between handling threads
 pthread_mutex_t mutexes[N];     //to sync the sending threads and the receiving thread
@@ -38,6 +39,8 @@ pthread_mutex_t rec_mutex = PTHREAD_MUTEX_INITIALIZER;   //to sync the accesses 
 pthread_mutex_t snd_mutex = PTHREAD_MUTEX_INITIALIZER;   //to sync the accesses to snd_queue
 pthread_mutex_t exp_mutex = PTHREAD_MUTEX_INITIALIZER;  //to sync the updates to expected_seq
 pthread_mutex_t close_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t first_open_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t wr_mutex = PTHREAD_MUTEX_INITIALIZER;   //to sync writes on the file
 pthread_cond_t index_cond = PTHREAD_COND_INITIALIZER;
 pthread_cond_t rec_cond = PTHREAD_COND_INITIALIZER;
 pthread_cond_t exp_cond = PTHREAD_COND_INITIALIZER;
@@ -506,7 +509,7 @@ void send_file(struct qnode ** send_queue, char * filename)
                 
         myseq += check;
         m.seq = myseq;
-        m.data_size = check;
+        m.data_size = (unsigned long) check;
         m.file_size = filesize;
         m.cmd_t = 2;
         m.ecode = success;        
@@ -540,15 +543,12 @@ void send_file(struct qnode ** send_queue, char * filename)
         }
     }
     
-    memset(file, 0, BUFF_SIZE);
-    strcat(file, "server_files/");
-
     return;
 }
 
 void * msg_handler(void * args) 
 {
-    int i, t, check, rec_base = 0;
+    int i, t, check, rec_base = 0, residual = 0;
     struct qnode ** snd_queue = (struct qnode **) args;
     struct qnode * node = NULL;
     struct qnode * msg_node = NULL;
@@ -598,8 +598,25 @@ void * msg_handler(void * args)
         }
         
         if(msg_node != NULL) {
-            if(msg_node->m->startfile == 1) {   // || (expected_seq - 1 + msg_node->m->data_size) == msg_node->m->seq) {
+#ifdef debug            
+            printf("Handler %d got msg #%d\n", i, msg_node->m->seq);
+#endif             
+            if(msg_node->m->startfile == 1) {  
                 rec_base = 1;               
+                
+                check = pthread_mutex_lock(&first_open_mutex);
+                if(check != 0) {
+                    perror("pthread_mutex_lock");
+                    exit(EXIT_FAILURE);
+                }
+                
+                first_open = 1;
+                
+                check = pthread_mutex_unlock(&first_open_mutex);
+                if(check != 0) {
+                    perror("pthread_mutex_unlock");
+                    exit(EXIT_FAILURE);
+                }
             }
             else {
                 rec_base = 0;
@@ -646,8 +663,6 @@ void * msg_handler(void * args)
                         perror("pthread_mutex_unlock");
                         exit(EXIT_FAILURE);
                     }
-                    
-                    //rec_base = 1;
                 }
                 
                 if(msg_node->m->cmd_t == 1) {  //answer to LIST
@@ -657,7 +672,143 @@ void * msg_handler(void * args)
                     send_file(snd_queue, msg_node->m->data);
                 }
                 else if(msg_node->m->cmd_t == 3) {  //answer to PUT
-                    //recv_file
+                    check = pthread_mutex_lock(&first_open_mutex);
+                    if(check != 0) {
+                        perror("pthread_mutex_lock");
+                        exit(EXIT_FAILURE);
+                    }
+                    
+                    if(first_open && rec_base) {
+                        memset(new_file, 0, BUFF_SIZE);
+                        strcat(new_file, "files_server/");
+                        strcat(new_file, msg_node->m->data);
+#ifdef debug
+                        printf("new_file = %s\n", new_file);
+#endif                            
+                        fd = open(new_file, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+                        if(fd == -1) {
+                            reset_msg(&m);
+                            myseq += 1;
+                            m.seq = myseq;
+                            m.startfile = 1;
+                            m.endfile = 1;
+                            m.data_size = 1;
+                            m.cmd_t = 3;
+                            m.ecode = serverror;
+                            
+                            insert_sorted(snd_queue, &cliaddr, &m, -1);
+                            send_base = *snd_queue;
+                            
+                            t = pthread_create(&s_tid[0], NULL, send_message, (void *) snd_queue); 
+                            if(t != 0) {
+                                fprintf(stderr, "Error in pthread_create\n");
+                                exit(EXIT_FAILURE);
+                            }
+                            
+                            sleep(10);
+                            
+                            fprintf(stderr, "Error in open\n");
+                            exit(EXIT_FAILURE);
+                        }
+                        
+                        first_open = 0;
+                    }
+                    
+                    check = pthread_mutex_unlock(&first_open_mutex);
+                    if(check != 0) {
+                        perror("pthread_mutex_unlock");
+                        exit(EXIT_FAILURE);
+                    }
+                    
+                    check = pthread_mutex_lock(&wr_mutex);
+                    if(check != 0) {
+                        perror("pthread_mutex_lock");
+                        exit(EXIT_FAILURE);
+                    }
+                                        
+                    check = write(fd, msg_node->m->data, msg_node->m->data_size);
+                    if(check == -1) {
+                        reset_msg(&m);
+                        myseq += 1;
+                        m.seq = myseq;
+                        m.startfile = 1;
+                        m.endfile = 1;
+                        m.data_size = 1;
+                        m.cmd_t = 3;
+                        m.ecode = serverror;
+                        
+                        insert_sorted(snd_queue, &cliaddr, &m, -1);
+                        send_base = *snd_queue;
+                        
+                        t = pthread_create(&s_tid[0], NULL, send_message, (void *) snd_queue); 
+                        if(t != 0) {
+                            fprintf(stderr, "Error in pthread_create\n");
+                            exit(EXIT_FAILURE);
+                        }
+                        
+                        sleep(10);
+                        
+                        perror("write");
+                        exit(EXIT_FAILURE);
+                    }
+                    else if(check < msg_node->m->data_size) {
+                        residual = msg_node->m->data_size - check;
+                        check = 0;
+                        while(check < residual) {
+                            check = write(fd, msg_node->m->data, residual);
+                            if(check == -1) {
+                                myseq += 1;
+                                m.seq = myseq;
+                                m.startfile = 1;
+                                m.endfile = 1;
+                                m.data_size = 1;
+                                m.cmd_t = 3;
+                                m.ecode = serverror;
+                                
+                                insert_sorted(snd_queue, &cliaddr, &m, -1);
+                                send_base = *snd_queue;
+                                
+                                t = pthread_create(&s_tid[0], NULL, send_message, (void *) snd_queue); 
+                                if(t != 0) {
+                                    fprintf(stderr, "Error in pthread_create\n");
+                                    exit(EXIT_FAILURE);
+                                }
+                                
+                                sleep(10);
+                                
+                                perror("write");
+                                exit(EXIT_FAILURE);
+                            }
+                            residual -= check;
+                        }
+                    }
+                    
+                    if(msg_node->m->endfile == 1) {
+                        close(fd);
+                        reset_msg(&m);
+                        myseq += 1;
+                        m.seq = myseq;
+                        m.startfile = 1;
+                        m.endfile = 1;
+                        m.data_size = 1;
+                        m.cmd_t = 3;
+                        m.ecode = success;
+                        
+                        insert_sorted(snd_queue, &cliaddr, &m, -1);
+                        send_base = *snd_queue;
+                        
+                        t = pthread_create(&s_tid[0], NULL, send_message, (void *) snd_queue); //sending thread
+                        if(t != 0) {
+                            fprintf(stderr, "Error in pthread_create\n");
+                            exit(EXIT_FAILURE);
+                        }
+                    }
+                    
+                    check = pthread_mutex_unlock(&wr_mutex);
+                    if(check != 0) {
+                        perror("pthread_mutex_unlock");
+                        exit(EXIT_FAILURE);
+                    }
                 }
                 else if(msg_node->m->fin == 1) {    //close connection
                     reset_msg(&m);
@@ -702,7 +853,17 @@ void * msg_handler(void * args)
                 exit(EXIT_FAILURE);
             }
             
+#ifdef debug 
+            printf("Before delete:");
+            print_queue(rec_queue);
+#endif             
+            
             delete_node(&rec_queue, msg_node->m);
+            
+#ifdef debug 
+            printf("After delete:");
+            print_queue(rec_queue);
+#endif            
             
             check = pthread_mutex_unlock(&rec_mutex);
             if(check != 0) {
