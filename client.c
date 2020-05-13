@@ -266,9 +266,6 @@ void * send_message(void * args)
                 time_to_wait.tv_nsec -= BILLION;
                 time_to_wait.tv_sec += 1;
             }
-            if(time_to_wait.tv_sec > MAX_TIMEOUT_INTERVAL) {
-                time_to_wait.tv_sec = MAX_TIMEOUT_INTERVAL;
-            }
             
             check = pthread_cond_timedwait(&ack_cond[i], &mutexes[i], &time_to_wait);
             if(check != 0) {
