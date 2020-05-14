@@ -5,6 +5,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <time.h>
+#include <math.h>
 
 #include "myUDP.h"
 #include "common.h"
@@ -107,12 +108,12 @@ void send_ack(int sockfd, struct sockaddr_in * addr, unsigned long my_seq, unsig
             exit(EXIT_FAILURE);
         }
 #ifdef verbose
-        printf("Sending ack for message #%u with seq #%u\n", m.ack_num, m.seq);
+        printf("Sending ack for message #%lu with seq #%lu\n", m.ack_num, m.seq);
 #endif    
     }
     else {
 #ifdef verbose 
-        printf("Ack for message #%u with seq #%u lost\n", m.ack_num, m.seq);
+        //printf("Ack for message #%lu with seq #%lu lost\n", m.ack_num, m.seq);
 #endif        
     }
     return;
@@ -124,7 +125,7 @@ void print_queue(struct qnode * head)
     
     printf("\n");
     while(curr != NULL) {
-        printf("#%u-> ", curr->m->seq);
+        printf("#%lu-> ", curr->m->seq);
         curr = curr->next;
     }
     
@@ -281,18 +282,83 @@ int queue_size(struct qnode * head)
     }
 }
 
-void get_elapsed_time(struct timespec * start, struct timespec * end, struct timespec * sample)
+struct timespec timespec_normalise(struct timespec ts)
 {
-    /*
-    double delta_s = end->tv_sec - start->tv_sec;
-    double delta_ns = end->tv_nsec - start->tv_nsec;
-    return delta_s + delta_ns * 1e-9;    
+    while(ts.tv_nsec >= BILLION) {
+        ++(ts.tv_sec);
+        ts.tv_nsec -= BILLION;
+    }
+
+    while(ts.tv_nsec <= -BILLION) {
+        --(ts.tv_sec);
+        ts.tv_nsec += BILLION;
+    }
+        
+    if(ts.tv_nsec < 0 && ts.tv_sec > 0) {
+        /* 
+        * Negative nanoseconds while seconds is positive.
+        * Decrement tv_sec and roll tv_nsec over.
+        */
+    
+        --(ts.tv_sec);
+        ts.tv_nsec = BILLION - (-1 * ts.tv_nsec);
+    }
+    else if(ts.tv_nsec > 0 && ts.tv_sec < 0) {
+        /* 
+        * Positive nanoseconds while seconds is negative.
+        * Increment tv_sec and roll tv_nsec over.
+        */
+    
+        ++(ts.tv_sec);
+        ts.tv_nsec = -BILLION - (-1 * ts.tv_nsec);
+    }
+
+    return ts;
+}
+
+struct timespec timespec_from_double(long double s)
+{
+    struct timespec ts = {
+        .tv_sec  = s,
+        .tv_nsec = (s - (long)(s)) * BILLION,
+    };
+
+    return timespec_normalise(ts);
+}
+
+long double timespec_to_double(struct timespec ts)
+{
+    return ((long double)(ts.tv_sec) + ((long double)(ts.tv_nsec) / BILLION));
+}
+
+struct timespec timespec_add(struct timespec ts1, struct timespec ts2)
+{
+    /* 
+    * Normalise inputs to prevent tv_nsec rollover if whole-second values are packed in it
     */
     
-    sample->tv_sec = end->tv_sec - start->tv_sec;
-    sample->tv_nsec = end->tv_nsec - start->tv_nsec;
+    ts1 = timespec_normalise(ts1);
+    ts2 = timespec_normalise(ts2);
     
-    return;
+    ts1.tv_sec  += ts2.tv_sec;
+    ts1.tv_nsec += ts2.tv_nsec;
+    
+    return timespec_normalise(ts1);
+}
+
+struct timespec timespec_sub(struct timespec ts1, struct timespec ts2)
+{
+    /* 
+    * Normalise inputs to prevent tv_nsec rollover if whole-second values are packed in it
+    */
+    
+    ts1 = timespec_normalise(ts1);
+    ts2 = timespec_normalise(ts2);
+
+    ts1.tv_sec  -= ts2.tv_sec;
+    ts1.tv_nsec -= ts2.tv_nsec;
+
+    return timespec_normalise(ts1);
 }
 
 void str_cut(char * str, int begin, int len)

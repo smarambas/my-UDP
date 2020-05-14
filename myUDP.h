@@ -9,7 +9,7 @@
 #define ALFA                        0.125
 #define BETA                        0.25
 
-#define MAX_TIMEOUT_INTERVAL        120   
+#define MAX_TIMEOUT_INTERVAL        10.0   
 
 struct msg {
     char syn;

@@ -23,11 +23,6 @@
 #include "server.h"
 
 struct timespec T  = {1, 0};    //timeout
-struct timespec sampleRTT = {0, 0};
-struct timespec estimatedRTT = {0, 0};
-struct timespec devRTT = {0, 0};
-struct timespec start_t = {0, 0};
-struct timespec end_t = {0, 0};
 
 unsigned long myseq;
 unsigned long expected_seq = 0;  //next expected sequence number
@@ -131,15 +126,22 @@ void complete_handshake(unsigned long * cliseq, struct qnode ** send_queue)
 
 void * send_message(void * args)
 {
-    int i = -1, j, check = 0;
+    int i = -1, j, check = 0, wtf = 0;
     struct qnode ** snd_queue = (struct qnode **) args;
     struct qnode * node = NULL;
     struct msg m;
     socklen_t addlen;
     struct timespec timeout;
     struct timespec time_to_wait;
-    struct timeval now;
-
+#ifdef adaptive    
+    int rx = 0;
+    long double temp;
+    struct timespec sampleRTT = {0, 0};
+    long double estimatedRTT = 0.0;
+    long double devRTT = 0.0;
+    struct timespec start_t = {0, 0};
+    struct timespec end_t = {0, 0};
+#endif
     check = pthread_mutex_lock(&index_mutex);
     if(check != 0) {
         fprintf(stderr, "Error in pthread_mutex_lock\n");
@@ -173,7 +175,7 @@ void * send_message(void * args)
     }
     
 #ifdef verbose
-    printf("I'm thread %u with index %d\n", pthread_self(), i);
+    printf("I'm thread %lu with index %d\n", pthread_self(), i);
 #endif
     
     check = pthread_mutex_unlock(&index_mutex);
@@ -200,9 +202,11 @@ void * send_message(void * args)
     
     srand(time(NULL));
     
+    //timeout = T;
+    
     while(node != NULL) {
 #ifdef verbose
-        printf("Thread %u sending msg #%u\n", (unsigned long) pthread_self(), node->m->seq);
+        printf("Thread %lu sending msg #%lu\n", pthread_self(), node->m->seq);
 #endif
         check = pthread_mutex_lock(&snd_mutex);
         if(check != 0) {
@@ -236,7 +240,7 @@ void * send_message(void * args)
             }
             
             if(node->m->seq == send_base->m->seq) {
-                clock_gettime(CLOCK_MONOTONIC, &start_t);
+                clock_gettime(CLOCK_THREAD_CPUTIME_ID, &start_t);
             }
             
             check = pthread_mutex_unlock(&snd_mutex);
@@ -246,13 +250,14 @@ void * send_message(void * args)
             }
 #endif            
 #ifdef verbose
-            printf("Message sent to server with seq #%u (tx)\n", m.seq);
+            printf("Message sent to server with seq #%lu (tx)\n", m.seq);
 #endif
         }
         else {
 #ifdef verbose 
-            printf("Message #%u lost\n", m.seq);
+            printf("Message #%lu lost\n", m.seq);
 #endif            
+            wtf = 1;
         }
         
         check = pthread_mutex_lock(&mutexes[i]);
@@ -262,94 +267,76 @@ void * send_message(void * args)
         }
         
         while(!acked[i]) {
-            gettimeofday(&now, NULL);
-            time_to_wait.tv_sec = now.tv_sec + timeout.tv_sec;
-            time_to_wait.tv_nsec = now.tv_usec * 1000UL + timeout.tv_nsec;
-            if(time_to_wait.tv_nsec >= BILLION) {
-                time_to_wait.tv_nsec -= BILLION;
-                time_to_wait.tv_sec += 1;
+            if(wtf) {
+                printf("WTF #%lu\n", node->m->seq);
             }
+            clock_gettime(CLOCK_REALTIME, &time_to_wait);
+            time_to_wait = timespec_add(time_to_wait, timeout);
             
             check = pthread_cond_timedwait(&ack_cond[i], &mutexes[i], &time_to_wait);
             if(check != 0) {
                 if(check == ETIMEDOUT) {
+#ifdef adaptive                
+                    rx = 1;
+#endif                     
                     if(rand_value() > P) {
                         check = sendto(connsd, (void *) &m, sizeof(struct msg), 0, (struct sockaddr *) &cliaddr, addlen);
                         if(check < 0) {
-                            fprintf(stderr, "Error in sendto\n");
                             perror("sendto");
                             exit(EXIT_FAILURE);
-                        }
-                        
-                        timeout.tv_sec = 2 * timeout.tv_sec;
-                        timeout.tv_nsec = 2 * timeout.tv_nsec;
-                        if(timeout.tv_nsec >= BILLION) {
-                            timeout.tv_nsec -= BILLION;
-                            timeout.tv_sec += 1;
-                        }
-                        if(timeout.tv_sec > MAX_TIMEOUT_INTERVAL) {
-                            timeout.tv_sec = MAX_TIMEOUT_INTERVAL;
-                        }
+                        }                 
 #ifdef verbose
-                        printf("Message sent to server with seq #%u (rx)\n", m.seq);
+                        printf("Message sent to server with seq #%lu (rx)\n", m.seq);
 #endif
                     }
                     else {
 #ifdef verbose 
-                        printf("Message #%u lost\n", m.seq);
+                        printf("Message #%lu lost\n", m.seq);
 #endif            
                     }
+                    
+                    timeout = timespec_add(timeout, timeout);   //timeout = 2 * timeout
                 }
                 else {
-                    fprintf(stderr, "Error in pthread_cond_timedwait with code: %d\n", check);
                     perror("pthread_cond_timedwait");
                     exit(EXIT_FAILURE);
                 }
             }
         }
-#ifdef adaptive 
-        check = pthread_mutex_lock(&snd_mutex);
-        if(check != 0) {
-            perror("pthread_mutex_lock");
-            exit(EXIT_FAILURE);
-        }
         
-        if(node->m->seq == send_base->m->seq) {
-            clock_gettime(CLOCK_MONOTONIC, &end_t);
-            get_elapsed_time(&start_t, &end_t, &sampleRTT);
-            estimatedRTT.tv_sec = (1 - ALFA) * estimatedRTT.tv_sec + ALFA * sampleRTT.tv_sec;
-            estimatedRTT.tv_nsec = (1 - ALFA) * estimatedRTT.tv_nsec + ALFA * sampleRTT.tv_nsec;
-            if(estimatedRTT.tv_nsec >= BILLION) {
-                estimatedRTT.tv_nsec -= BILLION;
-                estimatedRTT.tv_sec += 1;
-            }
-            devRTT.tv_sec = (1 - BETA) * devRTT.tv_sec + BETA * labs(sampleRTT.tv_sec - estimatedRTT.tv_sec);
-            devRTT.tv_nsec = (1 - BETA) * devRTT.tv_nsec + BETA * labs(sampleRTT.tv_nsec - estimatedRTT.tv_nsec);
-            if(devRTT.tv_nsec >= BILLION) {
-                devRTT.tv_nsec -= BILLION;
-                devRTT.tv_sec += 1;
-            }
-            T.tv_sec = estimatedRTT.tv_sec + 4 * devRTT.tv_sec;
-            T.tv_nsec = estimatedRTT.tv_nsec + 4 * devRTT.tv_nsec;   
-            if(T.tv_nsec >= BILLION) {
-                T.tv_nsec -= BILLION;
-                T.tv_sec += 1;
-            }
-            if(T.tv_sec > MAX_TIMEOUT_INTERVAL) {
-                T.tv_sec = MAX_TIMEOUT_INTERVAL;
-            }
-            
-            printf("New timer = {%ld, %ld}\n", T.tv_sec, T.tv_nsec);
-        }
-        
-        check = pthread_mutex_unlock(&snd_mutex);
-        if(check != 0) {
-            perror("pthread_mutex_unlock");
-            exit(EXIT_FAILURE);
-        }
-#endif
         acked[i] = 0;
         
+#ifdef adaptive 
+        clock_gettime(CLOCK_THREAD_CPUTIME_ID, &end_t);
+        if(!rx) {   //if there wasn't a retrasmission
+            sampleRTT = timespec_sub(end_t, start_t);
+            temp = timespec_to_double(sampleRTT);
+            estimatedRTT = (1 - ALFA) * estimatedRTT + ALFA * temp;
+            devRTT = (1 - BETA) * devRTT + BETA * fabsl(temp - estimatedRTT);
+            
+            if(node->m->seq == send_base->m->seq) {
+                check = pthread_mutex_lock(&snd_mutex);
+                if(check != 0) {
+                    perror("pthread_mutex_lock");
+                    exit(EXIT_FAILURE);
+                }
+            
+                temp = estimatedRTT + 4 * devRTT;
+                if(temp > MAX_TIMEOUT_INTERVAL) {
+                    temp = MAX_TIMEOUT_INTERVAL;
+                }
+                T = timespec_from_double(temp);                
+                            
+                check = pthread_mutex_unlock(&snd_mutex);
+                if(check != 0) {
+                    perror("pthread_mutex_unlock");
+                    exit(EXIT_FAILURE);
+                }
+            }
+        }
+        
+        rx = 0;
+#endif
         check = pthread_mutex_lock(&snd_mutex);
         if(check != 0) {
             fprintf(stderr, "Error in pthread_mutex_lock\n");
@@ -369,8 +356,8 @@ void * send_message(void * args)
         delete_node(snd_queue, &m);
         
 #ifdef verbose
-        printf("Thread %u: Deleting message with seq #%u\n", pthread_self(), m.seq);
-        print_queue(*snd_queue);
+        //printf("Thread %lu: Deleting message with seq #%lu\n", pthread_self(), m.seq);
+        //print_queue(*snd_queue);
 #endif 
         
         node = search_node_to_serve(snd_queue, i);
@@ -493,7 +480,7 @@ void send_list(struct qnode ** send_queue)
 
         insert_sorted(send_queue, &cliaddr, &m, -1);
 #ifdef verbose
-            printf("Inserted message with seq #%d in the queue\n", m.seq);
+            printf("Inserted message with seq #%lu in the queue\n", m.seq);
             print_queue(*send_queue);
 #endif
         
@@ -585,7 +572,7 @@ void send_file(struct qnode ** send_queue, char * filename)
         }
         
         check = read(fd, m.data, bsize);
-        while(check != bsize) {
+        while(check != (long int) bsize) {
             printf("Error: read less bytes\n");
             if(check < 0) {
                 fprintf(stderr, "Error in read\n");
@@ -613,7 +600,7 @@ void send_file(struct qnode ** send_queue, char * filename)
                 
         insert_sorted(send_queue, &cliaddr, &m, -1);
 #ifdef verbose
-            printf("Inserted message with seq #%d in the queue\n", m.seq);
+            printf("Inserted message with seq #%lu in the queue\n", m.seq);
             print_queue(*send_queue);
 #endif
         dim += check;
@@ -621,6 +608,7 @@ void send_file(struct qnode ** send_queue, char * filename)
     while(dim < filesize);
     
     send_base = *send_queue;
+    print_queue(*send_queue);
 
     for(i = 0; i < N; i++) {
         if(i < queue_size(*send_queue)) {
@@ -688,7 +676,7 @@ void * msg_handler(void * args)
         
         if(msg_node != NULL) {
 #ifdef verbose            
-            printf("Handler %d got msg #%d\n", i, msg_node->m->seq);
+            printf("Handler %d got msg #%lu\n", i, msg_node->m->seq);
 #endif             
             if(msg_node->m->startfile == 1) {  
                 rec_base = 1;               
@@ -718,7 +706,7 @@ void * msg_handler(void * args)
                     
                     pthread_cond_signal(&ack_cond[node->index]);          
 #ifdef verbose
-                    printf("Ack received for message #%u\n", msg_node->m->ack_num);
+                    printf("Ack received for message #%lu\n", msg_node->m->ack_num);
 #endif
                     if(!opened) {
                         opened = 1;
@@ -726,7 +714,7 @@ void * msg_handler(void * args)
                         "Client address\t%s\n"
                         "Client port\t%u\n\n", inet_ntoa((cliaddr).sin_addr), ntohs((cliaddr).sin_port));
 #ifdef verbose 
-                        printf("myseq = %u\n\n", myseq);
+                        printf("myseq = %lu\n\n", myseq);
 #endif        
                     }
                 }
@@ -771,9 +759,7 @@ void * msg_handler(void * args)
                         memset(new_file, 0, BUFF_SIZE);
                         strcat(new_file, "files_server/");
                         strcat(new_file, msg_node->m->data);
-#ifdef verbose
-                        printf("new_file = %s\n", new_file);
-#endif                            
+                        
                         fd = open(new_file, O_WRONLY | O_CREAT | O_TRUNC, 0666);
                         if(fd == -1) {
                             reset_msg(&m);
@@ -840,7 +826,7 @@ void * msg_handler(void * args)
                         perror("write");
                         exit(EXIT_FAILURE);
                     }
-                    else if(check < msg_node->m->data_size) {
+                    else if(check < (long int) msg_node->m->data_size) {
                         residual = msg_node->m->data_size - check;
                         check = 0;
                         while(check < residual) {
@@ -943,15 +929,15 @@ void * msg_handler(void * args)
             }
             
 #ifdef verbose 
-            printf("Before delete:");
-            print_queue(rec_queue);
+            //printf("Before delete:");
+            //print_queue(rec_queue);
 #endif             
             
             delete_node(&rec_queue, msg_node->m);
             
 #ifdef verbose 
-            printf("After delete:");
-            print_queue(rec_queue);
+            //printf("After delete:");
+            //print_queue(rec_queue);
 #endif            
             
             check = pthread_mutex_unlock(&rec_mutex);
@@ -1012,10 +998,6 @@ void recv_msg(struct qnode ** send_queue)
                     exit(EXIT_FAILURE);
                 }
                 
-#ifdef verbose
-                printf("Received message from the client with seq #%d\n", m.seq);
-#endif
-                
                 check = pthread_mutex_lock(&rec_mutex);
                 if(check != 0) {
                     fprintf(stderr, "Error in pthread_mutex_lock\n");
@@ -1024,6 +1006,9 @@ void recv_msg(struct qnode ** send_queue)
                 
                 if(m.ack != 1) {
                     send_ack(connsd, &cliaddr, ++myseq, m.seq);    //send an ack for the message
+#ifdef verbose
+                    printf("Received message from the client with seq #%lu\n", m.seq);
+#endif                    
                 }
                 
                 if(m.seq >= expected_seq) {  //the message is not old

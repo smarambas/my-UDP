@@ -22,9 +22,13 @@ struct qnode * search_node_byseq(struct qnode * head, unsigned long seq);
 struct qnode * search_node_to_serve(struct qnode ** head, int i);
 struct qnode * pop_first(struct qnode ** headp);
 int queue_size(struct qnode * head);
-void get_elapsed_time(struct timespec * start, struct timespec * end, struct timespec * sample);
 void str_cut(char * str, int begin, int len);
 double rand_value(void);
 void sigint_handler(int dummy);
+struct timespec timespec_normalise(struct timespec ts);
+struct timespec timespec_from_double(long double s);
+long double timespec_to_double(struct timespec ts);
+struct timespec timespec_sub(struct timespec ts1, struct timespec ts2);
+struct timespec timespec_add(struct timespec ts1, struct timespec ts2);
 
 #endif
