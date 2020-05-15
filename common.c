@@ -76,6 +76,10 @@ char** split_line(char* line)
 
 void reset_msg(struct msg * m)
 {
+    /*
+     * Reset the message's fields
+     */
+    
     m->ack = 0;
     m->fin = 0;
     m->syn = 0;
@@ -88,10 +92,16 @@ void reset_msg(struct msg * m)
     m->data_size = 0;
     m->file_size = 0;
     memset(m->data, 0, PAYLOAD_SIZE);
+    
+    return;
 }
 
 void send_ack(int sockfd, struct sockaddr_in * addr, unsigned long my_seq, unsigned long seq_to_ack)
 {
+    /*
+     * Try to send an ack to destination
+     */
+    
     int check;
     struct msg m;
     socklen_t addlen = sizeof(*addr);
@@ -104,7 +114,7 @@ void send_ack(int sockfd, struct sockaddr_in * addr, unsigned long my_seq, unsig
     if(rand_value() > P) {
         check = sendto(sockfd, (void*) &m, sizeof(struct msg), 0, (struct sockaddr*) addr, addlen);
         if(check < 0) {
-            fprintf(stderr, "Error in sendto\n");
+            perror("sendto");
             exit(EXIT_FAILURE);
         }
 #ifdef verbose
@@ -113,14 +123,19 @@ void send_ack(int sockfd, struct sockaddr_in * addr, unsigned long my_seq, unsig
     }
     else {
 #ifdef verbose 
-        //printf("Ack for message #%lu with seq #%lu lost\n", m.ack_num, m.seq);
+        printf("Ack for message #%lu with seq #%lu lost\n", m.ack_num, m.seq);
 #endif        
     }
+    
     return;
 }
 
 void print_queue(struct qnode * head)
 {
+    /*
+     * Print the queue (usually used in verbose mode)
+     */
+    
     struct qnode * curr = head;
     
     printf("\n");
@@ -133,10 +148,12 @@ void print_queue(struct qnode * head)
     return;
 }
 
-void insert_sorted(struct qnode ** headp, struct sockaddr_in * addr, struct msg * m, int index)
+int insert_sorted(struct qnode ** headp, struct sockaddr_in * addr, struct msg * m, int index)
 {
     /*
-     * Insert a new node in the queue, sorted by the sequence number of the message, ignoring the duplicates
+     * Insert a new node in the queue, sorted by the sequence number of the message
+     * The duplicates are ignored
+     * If the insertion is succesful, return 1, 0 otherwise
      */
     
     struct qnode * curr = *headp;
@@ -145,7 +162,6 @@ void insert_sorted(struct qnode ** headp, struct sockaddr_in * addr, struct msg 
 
     new = malloc(sizeof(struct qnode));
     if(!new) {
-        //fprintf(stderr, "Error in malloc\n");
         perror("malloc"); 
         exit(EXIT_FAILURE);
     }
@@ -154,7 +170,6 @@ void insert_sorted(struct qnode ** headp, struct sockaddr_in * addr, struct msg 
     if(m != NULL) {
         new->m = (struct msg *) malloc(sizeof(struct msg));
         if(!(new->m)) {
-            fprintf(stderr, "Error in malloc\n");
             perror("malloc");
             exit(EXIT_FAILURE);
         }
@@ -183,8 +198,11 @@ void insert_sorted(struct qnode ** headp, struct sockaddr_in * addr, struct msg 
         prev->next = new;
         new->next = curr;
     }
+    else {
+        return 0;
+    }
     
-    return;
+    return 1;
 }
 
 int delete_node(struct qnode ** headp, struct msg * m)
@@ -219,6 +237,10 @@ int delete_node(struct qnode ** headp, struct msg * m)
 
 struct qnode * pop_first(struct qnode ** headp) 
 {
+    /*
+     * Detach and return the first node of the queue
+     */
+    
     struct qnode * first = *headp;
     
     if(first == NULL) {
@@ -231,8 +253,12 @@ struct qnode * pop_first(struct qnode ** headp)
     }
 }
 
-struct qnode * search_node_byseq(struct qnode * head, unsigned long seq)
+struct qnode * search_node_by_seq(struct qnode * head, unsigned long seq)
 {
+    /*
+     * Return a pointer to the node identified by the sequence number seq
+     */
+    
     struct qnode * curr = head;
 
     while(curr != NULL) {
@@ -249,6 +275,10 @@ struct qnode * search_node_byseq(struct qnode * head, unsigned long seq)
 
 struct qnode * search_node_to_serve(struct qnode ** headp, int i)
 {
+    /*
+     * Return the first node with a not yet set index
+     */
+    
     struct qnode * curr = *headp;
 
     while(curr != NULL) {
@@ -266,6 +296,10 @@ struct qnode * search_node_to_serve(struct qnode ** headp, int i)
 
 int queue_size(struct qnode * head)
 {
+    /*
+     * Return the size of the queue
+     */
+    
     int i = 1;
     struct qnode * curr = head;
 
@@ -284,6 +318,10 @@ int queue_size(struct qnode * head)
 
 struct timespec timespec_normalise(struct timespec ts)
 {
+    /*
+     * Normalise the value of the timespec value
+     */
+    
     while(ts.tv_nsec >= BILLION) {
         ++(ts.tv_sec);
         ts.tv_nsec -= BILLION;
@@ -318,6 +356,11 @@ struct timespec timespec_normalise(struct timespec ts)
 
 struct timespec timespec_from_double(long double s)
 {
+    /*
+     * Return a timespec starting from a double
+     * The double variable represents a time in seconds
+     */
+    
     struct timespec ts = {
         .tv_sec  = s,
         .tv_nsec = (s - (long)(s)) * BILLION,
@@ -328,13 +371,18 @@ struct timespec timespec_from_double(long double s)
 
 long double timespec_to_double(struct timespec ts)
 {
+    /*
+     * Return a double starting from a timespec
+     * The double variable represents a time in seconds
+     */
+    
     return ((long double)(ts.tv_sec) + ((long double)(ts.tv_nsec) / BILLION));
 }
 
 struct timespec timespec_add(struct timespec ts1, struct timespec ts2)
 {
     /* 
-    * Normalise inputs to prevent tv_nsec rollover if whole-second values are packed in it
+    * Add two timespec variable and normalise inputs to prevent tv_nsec rollover if whole-second values are packed in it
     */
     
     ts1 = timespec_normalise(ts1);
@@ -349,7 +397,7 @@ struct timespec timespec_add(struct timespec ts1, struct timespec ts2)
 struct timespec timespec_sub(struct timespec ts1, struct timespec ts2)
 {
     /* 
-    * Normalise inputs to prevent tv_nsec rollover if whole-second values are packed in it
+    * Subtract two timespec variable and normalise inputs to prevent tv_nsec rollover if whole-second values are packed in it
     */
     
     ts1 = timespec_normalise(ts1);
@@ -363,6 +411,10 @@ struct timespec timespec_sub(struct timespec ts1, struct timespec ts2)
 
 void str_cut(char * str, int begin, int len)
 {
+    /*
+     * Remove a piece of the string
+     */
+    
     int slen = strlen(str);
 
     if(len < 0) {
@@ -378,6 +430,10 @@ void str_cut(char * str, int begin, int len)
 
 double rand_value(void)
 {
+    /*
+     * Return a random value between 0 and 1
+     */
+    
     return (double) rand() / RAND_MAX;
 }
 
