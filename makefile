@@ -18,7 +18,7 @@ adaptive: client.c client.h server.c server.h common.c common.h myUDP.h
 	$(CC) $(CFLAGS) $(EXTRA_FLAGS) $@ client.o common.o -o client -pthread -lm 
 	$(CC) $(CFLAGS) $(EXTRA_FLAGS) $@ server.o common.o -o server -pthread -lm 
 
-adaptive_verb: client.c client.h server.c server.h common.c common.h myUDP.h
+adaptive-verbose: client.c client.h server.c server.h common.c common.h myUDP.h
 	$(CC) $(CFLAGS) $(EXTRA_FLAGS) verbose $(EXTRA_FLAGS) adaptive client.c -c 
 	$(CC) $(CFLAGS) $(EXTRA_FLAGS) verbose $(EXTRA_FLAGS) adaptive server.c -c 
 	$(CC) $(CFLAGS) $(EXTRA_FLAGS) verbose $(EXTRA_FLAGS) adaptive common.c -c 

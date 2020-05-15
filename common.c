@@ -125,7 +125,7 @@ void print_queue(struct qnode * head)
     
     printf("\n");
     while(curr != NULL) {
-        printf("#%lu-> ", curr->m->seq);
+        printf("#%lu (%d)-> ", curr->m->seq, curr->index);
         curr = curr->next;
     }
     

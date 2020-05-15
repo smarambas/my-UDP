@@ -223,6 +223,8 @@ void * send_message(void * args)
         reset_msg(&m);
         memcpy(&m, node->m, sizeof(struct msg));
         
+        acked[i] = 0; 
+        
         if(rand_value() > P) {
             check = sendto(sockfd, (void *) &m, sizeof(struct msg), 0, (struct sockaddr *) &servaddr, addlen);
             if(check < 0) {
@@ -390,7 +392,7 @@ void * msg_handler(void * args)
      * Manage the packets in the correct order
      */
 
-    int i, check = 0, blen, residual = 0, rec_base = 0;
+    int i = 0, check = 0, blen, residual = 0, rec_base = 0;
     struct qnode ** snd_queue = (struct qnode **) args;
     struct qnode * node = NULL;
     struct qnode * msg_node = NULL;

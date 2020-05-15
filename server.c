@@ -126,7 +126,7 @@ void complete_handshake(unsigned long * cliseq, struct qnode ** send_queue)
 
 void * send_message(void * args)
 {
-    int i = -1, j, check = 0, wtf = 0;
+    int i = -1, j, check = 0;
     struct qnode ** snd_queue = (struct qnode **) args;
     struct qnode * node = NULL;
     struct msg m;
@@ -142,6 +142,7 @@ void * send_message(void * args)
     struct timespec start_t = {0, 0};
     struct timespec end_t = {0, 0};
 #endif
+    
     check = pthread_mutex_lock(&index_mutex);
     if(check != 0) {
         fprintf(stderr, "Error in pthread_mutex_lock\n");
@@ -201,9 +202,7 @@ void * send_message(void * args)
     addlen = sizeof(cliaddr);
     
     srand(time(NULL));
-    
-    //timeout = T;
-    
+        
     while(node != NULL) {
 #ifdef verbose
         printf("Thread %lu sending msg #%lu\n", pthread_self(), node->m->seq);
@@ -224,6 +223,8 @@ void * send_message(void * args)
         
         reset_msg(&m);
         memcpy(&m, node->m, sizeof(struct msg));
+        
+        acked[i] = 0;
         
         if(rand_value() > P) {
             check = sendto(connsd, (void *) &m, sizeof(struct msg), 0, (struct sockaddr *) &cliaddr, addlen);
@@ -257,7 +258,6 @@ void * send_message(void * args)
 #ifdef verbose 
             printf("Message #%lu lost\n", m.seq);
 #endif            
-            wtf = 1;
         }
         
         check = pthread_mutex_lock(&mutexes[i]);
@@ -267,9 +267,6 @@ void * send_message(void * args)
         }
         
         while(!acked[i]) {
-            if(wtf) {
-                printf("WTF #%lu\n", node->m->seq);
-            }
             clock_gettime(CLOCK_REALTIME, &time_to_wait);
             time_to_wait = timespec_add(time_to_wait, timeout);
             
@@ -356,8 +353,8 @@ void * send_message(void * args)
         delete_node(snd_queue, &m);
         
 #ifdef verbose
-        //printf("Thread %lu: Deleting message with seq #%lu\n", pthread_self(), m.seq);
-        //print_queue(*snd_queue);
+        printf("Thread %lu: Deleting message with seq #%lu\n", pthread_self(), m.seq);
+        print_queue(*snd_queue);
 #endif 
         
         node = search_node_to_serve(snd_queue, i);
@@ -608,7 +605,9 @@ void send_file(struct qnode ** send_queue, char * filename)
     while(dim < filesize);
     
     send_base = *send_queue;
+#ifdef verbose
     print_queue(*send_queue);
+#endif  
 
     for(i = 0; i < N; i++) {
         if(i < queue_size(*send_queue)) {
@@ -625,7 +624,7 @@ void send_file(struct qnode ** send_queue, char * filename)
 
 void * msg_handler(void * args) 
 {
-    int i, t, check, rec_base = 0, residual = 0;
+    int i = 0, t, check, rec_base = 0, residual = 0;
     struct qnode ** snd_queue = (struct qnode **) args;
     struct qnode * node = NULL;
     struct qnode * msg_node = NULL;
@@ -706,7 +705,7 @@ void * msg_handler(void * args)
                     
                     pthread_cond_signal(&ack_cond[node->index]);          
 #ifdef verbose
-                    printf("Ack received for message #%lu\n", msg_node->m->ack_num);
+                    printf("Ack received for message #%lu (%d)\n", msg_node->m->ack_num, node->index);
 #endif
                     if(!opened) {
                         opened = 1;
