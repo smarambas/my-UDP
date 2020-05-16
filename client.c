@@ -24,6 +24,8 @@
 
 /* Global Variables */
 struct timespec T  = {1, 0};                                    //timeout {seconds, nanoseconds}
+struct timespec start_test;
+struct timespec end_test;
 
 unsigned long myseq;                                            //sequence number
 unsigned long expected_seq = 0;                                 //next expected sequence number
@@ -553,11 +555,15 @@ void * msg_handler(void * args)
                         
                         if(msg_node->m->endfile == 1) { //if the message is the last in the ordered sequence, then print the list
                             printf("\nLIST:\n%s\n", global_buffer);
-                            memset(global_buffer, 0, bsize+1);
+                            memset(global_buffer, 0, bsize+1);                            
+                            clock_gettime(CLOCK_REALTIME, &end_test);
+                            printf("Total time elapsed: %.2Lf s\n\n", timespec_to_double(timespec_sub(end_test, start_test)));                            
                         }
                     }
                     else {
-                        printf("\nLIST:\n%s\n", msg_node->m->data);
+                        printf("\nLIST:\n%s\n", msg_node->m->data);                        
+                        clock_gettime(CLOCK_REALTIME, &end_test);
+                        printf("Total time elapsed: %.2Lf s\n\n", timespec_to_double(timespec_sub(end_test, start_test)));                        
                     }
                 }
                 else if(msg_node->m->cmd_t == 2) {  //if the message is an answer to the get command 
@@ -598,7 +604,9 @@ void * msg_handler(void * args)
                         
                         if(msg_node->m->endfile == 1) { //if the message is the last in the ordered sequence, close the file
                             close(fd);
-                            printf("\nDownload completed!\n\n");
+                            printf("\nDownload completed!\n\n");                            
+                            clock_gettime(CLOCK_REALTIME, &end_test);
+                            printf("Total time elapsed: %.2Lf s\n\n", timespec_to_double(timespec_sub(end_test, start_test)));                            
                         }
                         
                         check = pthread_mutex_unlock(&wr_mutex);
@@ -617,7 +625,9 @@ void * msg_handler(void * args)
                 }
                 else if(msg_node->m->cmd_t == 3) { //if the message is an answer to the post command 
                     if(msg_node->m->ecode == success) {
-                        printf("\nFile uploaded correctly!\n\n");
+                        printf("\nFile uploaded correctly!\n\n");                        
+                        clock_gettime(CLOCK_REALTIME, &end_test);
+                        printf("Total time elapsed: %.2Lf s\n\n", timespec_to_double(timespec_sub(end_test, start_test)));                       
                     }
                     else {
                         printf("\nError: the upload failed.\n\n");  //if the upload fails, we close the connection because almost surely the server crashed
@@ -836,7 +846,7 @@ void send_file(struct qnode ** send_queue, char * filename)
     fd = open(file, O_RDONLY);
     if(fd == -1) {
         if(errno == ENOENT) {
-            printf("The file to send doesn't exist.\n");
+            printf("\nError: the file to send doesn't exist.\n");
             return;
         }
         else {
@@ -906,6 +916,8 @@ void send_file(struct qnode ** send_queue, char * filename)
     while(dim < filesize);
     
     send_base = *send_queue;
+        
+    clock_gettime(CLOCK_REALTIME, &start_test);    
 
     for(i = 0; i < N; i++) {
         if(i < queue_size(*send_queue)) {   //create only the necessary number of threads
@@ -953,7 +965,7 @@ void send_cmd(struct qnode ** send_queue)
     printf("\nInsert one of the following requests to the server:\n"
                 "- list\n"
                 "- get <filename>\n"
-                "- post <filename>\n"
+                "- put <filename>\n"
                 "- mylist\n"
                 "- help\n"
                 "- quit\n\n");
@@ -974,6 +986,8 @@ void send_cmd(struct qnode ** send_queue)
 
             insert_sorted(send_queue, &servaddr, &m, -1);
             send_base = *send_queue;
+                        
+            clock_gettime(CLOCK_REALTIME, &start_test);            
             
             t = pthread_create(&s_tid[0], NULL, send_message, (void *) send_queue); 
             if(t != 0) {
@@ -999,6 +1013,8 @@ void send_cmd(struct qnode ** send_queue)
 
             insert_sorted(send_queue, &servaddr, &m, -1);
             send_base = *send_queue;
+            
+            clock_gettime(CLOCK_REALTIME, &start_test);
 
             t = pthread_create(&s_tid[0], NULL, send_message, (void *) send_queue); 
             if(t != 0) {
@@ -1006,7 +1022,7 @@ void send_cmd(struct qnode ** send_queue)
                 exit(EXIT_FAILURE);
             }
         }
-        else if(strcmp(tokens[0], "post") == 0 && tokens[1] != NULL) {
+        else if(strcmp(tokens[0], "put") == 0 && tokens[1] != NULL) {
             send_file(send_queue, tokens[1]);
         }
         else if(strcmp(tokens[0], "mylist") == 0) {
@@ -1016,7 +1032,7 @@ void send_cmd(struct qnode ** send_queue)
             printf("\nInsert one of the following requests to the server:\n"
                 "- list\n"
                 "- get <filename>\n"
-                "- post <filename>\n"
+                "- put <filename>\n"
                 "- mylist"
                 "- help\n"
                 "- quit\n\n");
@@ -1122,6 +1138,8 @@ int main(int argc, char** argv)
         perror("pthread_create\n");
         exit(EXIT_FAILURE);
     } 
+    
+    printf("\nN = %d\nT = %.2Lf s\nP = %.f%%\n\n", N, timespec_to_double(T), P * 100);
 
     open_connection(&s_head);
     

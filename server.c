@@ -23,7 +23,7 @@
 #include "server.h"
 
 /* Global Variables */
-struct timespec T  = {1, 0};                                        //timeout {seconds, nanoseconds}
+struct timespec T  = {0, 200000000};                                        //timeout {seconds, nanoseconds}
 
 unsigned long myseq;                                                //sequence number
 unsigned long expected_seq = 0;                                     //next expected sequence number
@@ -83,7 +83,7 @@ int accept_connection(int listensd, struct sockaddr_in * cliaddr, unsigned long 
         }
     }
 
-    printf("Received SYN message from %s on port %u\n", inet_ntoa((*cliaddr).sin_addr), ntohs((*cliaddr).sin_port));
+    printf("\nReceived SYN message from %s on port %u\n", inet_ntoa((*cliaddr).sin_addr), ntohs((*cliaddr).sin_port));
     *cliseq = m.seq;
     expected_seq = m.seq + 1;
     printf("Spawning a connection socket...\n");
@@ -753,9 +753,9 @@ void * msg_handler(void * args)
 #endif
                     if(!opened) {   //if the message is a syn, open the connection
                         opened = 1;
-                        printf("Connection established with:\n"
-                        "Client address\t%s\n"
-                        "Client port\t%u\n\n", inet_ntoa((cliaddr).sin_addr), ntohs((cliaddr).sin_port));
+                        printf("\nConnection established with:\n"
+                               "Client address\t%s\n"
+                               "Client port\t%u\n\n", inet_ntoa((cliaddr).sin_addr), ntohs((cliaddr).sin_port));
 #ifdef verbose 
                         printf("myseq = %lu\n\n", myseq);
 #endif        

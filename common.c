@@ -235,24 +235,6 @@ int delete_node(struct qnode ** headp, struct msg * m)
     }
 }
 
-struct qnode * pop_first(struct qnode ** headp) 
-{
-    /*
-     * Detach and return the first node of the queue
-     */
-    
-    struct qnode * first = *headp;
-    
-    if(first == NULL) {
-        return NULL;
-    }
-    else {
-        *headp = first->next;
-        first->next = NULL;
-        return first;
-    }
-}
-
 struct qnode * search_node_by_seq(struct qnode * head, unsigned long seq)
 {
     /*

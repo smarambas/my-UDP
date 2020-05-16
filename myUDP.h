@@ -3,8 +3,8 @@
 
 #define PAYLOAD_SIZE                512
 
-#define N                           10           //window width
-#define P                           0.05        //probability of losing a packet    
+#define N                           1          //window width
+#define P                           0.0        //probability of losing a packet    
 
 #define ALFA                        0.125
 #define BETA                        0.25

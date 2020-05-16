@@ -20,7 +20,6 @@ int insert_sorted(struct qnode ** headp, struct sockaddr_in * addr, struct msg *
 int delete_node(struct qnode ** headp, struct msg * m);
 struct qnode * search_node_by_seq(struct qnode * head, unsigned long seq);
 struct qnode * search_node_to_serve(struct qnode ** head, int i);
-struct qnode * pop_first(struct qnode ** headp);
 int queue_size(struct qnode * head);
 void str_cut(char * str, int begin, int len);
 double rand_value(void);
