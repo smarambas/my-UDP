@@ -23,7 +23,7 @@
 #include "client.h"
 
 /* Global Variables */
-struct timespec T  = {1, 0};                                    //timeout {seconds, nanoseconds}
+struct timespec timeout;
 struct timespec start_test;
 struct timespec end_test;
 
@@ -127,12 +127,12 @@ void * send_message(void * args)
      * It can use both a fixed value timer or an adaptive timer
      */
     
-    int i = -1, j, check = 0;
+    int i = -1, j, check = 0, rx = 0;
     struct qnode ** snd_queue = (struct qnode **) args;
     struct qnode * node = NULL;
     struct msg m;
-    socklen_t addlen;
-    struct timespec timeout;
+    socklen_t addlen = sizeof(servaddr);
+    struct timespec rx_timeout;
     struct timespec time_to_wait;
     long double temp;
     
@@ -140,7 +140,6 @@ void * send_message(void * args)
     /* 
      * variables needed for the adaptive timer
      */
-    int rx = 0;
     struct timespec sampleRTT = {0, 0};
     long double estimatedRTT = 0.0;
     long double devRTT = 0.0;
@@ -203,29 +202,16 @@ void * send_message(void * args)
         perror("pthread_mutex_unlock");
         exit(EXIT_FAILURE);
     }
-
-    addlen = sizeof(servaddr);
     
+    timeout = timespec_from_double(T);
+        
     srand(time(NULL));
         
     while(node != NULL) { 
 #ifdef verbose
         printf("Thread %lu sending msg #%lu\n", pthread_self(), node->m->seq);
 #endif
-        check = pthread_mutex_lock(&snd_mutex);
-        if(check != 0) {
-            perror("pthread_mutex_lock");
-            exit(EXIT_FAILURE);
-        }
-        
-        timeout = T;
-        
-        check = pthread_mutex_unlock(&snd_mutex);
-        if(check != 0) {
-            perror("pthread_mutex_unlock");
-            exit(EXIT_FAILURE);
-        }
-        
+
         reset_msg(&m);
         memcpy(&m, node->m, sizeof(struct msg));    //extract the message from the node
         
@@ -284,14 +270,19 @@ void * send_message(void * args)
         
         while(!acked[i]) {  //until the message is not acked, continue to retransmit it
             clock_gettime(CLOCK_REALTIME, &time_to_wait);
-            time_to_wait = timespec_add(time_to_wait, timeout);
+            
+            if(rx == 0) {
+                time_to_wait = timespec_add(time_to_wait, timeout);
+            }
+            else {
+                time_to_wait = timespec_add(time_to_wait, rx_timeout);
+            }
             
             check = pthread_cond_timedwait(&ack_cond[i], &mutexes[i], &time_to_wait);
             if(check != 0) {
                 if(check == ETIMEDOUT) {    //if the timer expires, then we must try to send again the message
-#ifdef adaptive                
                     rx = 1;
-#endif                    
+                    
                     if(rand_value() > P) {
                         check = sendto(sockfd, (void *) &m, sizeof(struct msg), 0, (struct sockaddr *) &servaddr, addlen);
                         if(check < 0) {
@@ -309,12 +300,12 @@ void * send_message(void * args)
                     }
                     
                     //if the timer expires, it doubles for a maximum of MAX_TIMEOUT_INTERVAL seconds
-                    timeout = timespec_add(timeout, timeout);
-                    temp = timespec_to_double(timeout);
+                    rx_timeout = timespec_add(timeout, timeout);
+                    temp = timespec_to_double(rx_timeout);
                     if(temp > MAX_TIMEOUT_INTERVAL) {
                         temp = MAX_TIMEOUT_INTERVAL;
                     }
-                    timeout = timespec_from_double(temp);
+                    rx_timeout = timespec_from_double(temp);
                 }   
                 else {
                     perror("pthread_cond_timedwait");
@@ -345,29 +336,29 @@ void * send_message(void * args)
             estimatedRTT = (1 - ALFA) * estimatedRTT + ALFA * temp;
             devRTT = (1 - BETA) * devRTT + BETA * fabsl(temp - estimatedRTT);
             
-            if(node->m->seq == send_base->m->seq) { //update the timer value only if the node is the send_base
-                check = pthread_mutex_lock(&snd_mutex);
-                if(check != 0) {
-                    perror("pthread_mutex_lock");
-                    exit(EXIT_FAILURE);
-                }
+            check = pthread_mutex_lock(&snd_mutex);
+            if(check != 0) {
+                perror("pthread_mutex_lock");
+                exit(EXIT_FAILURE);
+            }
+        
+            temp = estimatedRTT + 4 * devRTT;
+            if(temp > MAX_TIMEOUT_INTERVAL) {
+                temp = MAX_TIMEOUT_INTERVAL;
+            }
             
-                temp = estimatedRTT + 4 * devRTT;
-                if(temp > MAX_TIMEOUT_INTERVAL) {
-                    temp = MAX_TIMEOUT_INTERVAL;
-                }
-                T = timespec_from_double(temp);                
-                            
-                check = pthread_mutex_unlock(&snd_mutex);
-                if(check != 0) {
-                    perror("pthread_mutex_unlock");
-                    exit(EXIT_FAILURE);
-                }
+//                 printf("timeout = %Lf\n", temp);
+            
+            timeout = timespec_from_double(temp);    
+                        
+            check = pthread_mutex_unlock(&snd_mutex);
+            if(check != 0) {
+                perror("pthread_mutex_unlock");
+                exit(EXIT_FAILURE);
             }
         }
-        
-        rx = 0;
 #endif
+        rx = 0;
         
         check = pthread_mutex_lock(&snd_mutex);
         if(check != 0) {
@@ -557,13 +548,13 @@ void * msg_handler(void * args)
                             printf("\nLIST:\n%s\n", global_buffer);
                             memset(global_buffer, 0, bsize+1);                            
                             clock_gettime(CLOCK_REALTIME, &end_test);
-                            printf("Total time elapsed: %.2Lf s\n\n", timespec_to_double(timespec_sub(end_test, start_test)));                            
+                            printf("Total time elapsed: %.3Lf s\n\n", timespec_to_double(timespec_sub(end_test, start_test)));                            
                         }
                     }
                     else {
                         printf("\nLIST:\n%s\n", msg_node->m->data);                        
                         clock_gettime(CLOCK_REALTIME, &end_test);
-                        printf("Total time elapsed: %.2Lf s\n\n", timespec_to_double(timespec_sub(end_test, start_test)));                        
+                        printf("Total time elapsed: %.3Lf s\n\n", timespec_to_double(timespec_sub(end_test, start_test)));                        
                     }
                 }
                 else if(msg_node->m->cmd_t == 2) {  //if the message is an answer to the get command 
@@ -606,7 +597,7 @@ void * msg_handler(void * args)
                             close(fd);
                             printf("\nDownload completed!\n\n");                            
                             clock_gettime(CLOCK_REALTIME, &end_test);
-                            printf("Total time elapsed: %.2Lf s\n\n", timespec_to_double(timespec_sub(end_test, start_test)));                            
+                            printf("Total time elapsed: %.3Lf s\n\n", timespec_to_double(timespec_sub(end_test, start_test)));                            
                         }
                         
                         check = pthread_mutex_unlock(&wr_mutex);
@@ -627,7 +618,7 @@ void * msg_handler(void * args)
                     if(msg_node->m->ecode == success) {
                         printf("\nFile uploaded correctly!\n\n");                        
                         clock_gettime(CLOCK_REALTIME, &end_test);
-                        printf("Total time elapsed: %.2Lf s\n\n", timespec_to_double(timespec_sub(end_test, start_test)));                       
+                        printf("Total time elapsed: %.3Lf s\n\n", timespec_to_double(timespec_sub(end_test, start_test)));                       
                     }
                     else {
                         printf("\nError: the upload failed.\n\n");  //if the upload fails, we close the connection because almost surely the server crashed
@@ -760,6 +751,9 @@ void * recv_msg(void * args)
             else {
                 if(m.ack != 1) {
                     send_ack(sockfd, &servaddr, myseq, m.seq);
+                }
+                else if(m.ack == 1) {
+                    insert_sorted(&rec_queue, NULL, &m, -1);    
                 }
             }
 
@@ -1139,7 +1133,14 @@ int main(int argc, char** argv)
         exit(EXIT_FAILURE);
     } 
     
-    printf("\nN = %d\nT = %.2Lf s\nP = %.f%%\n\n", N, timespec_to_double(T), P * 100);
+    printf("\nN = %d\nT = %.2f s ", N, T);
+#ifndef adaptive 
+    printf("(fixed timer)\n");
+#endif        
+#ifdef adaptive 
+    printf("(adaptive timer)\n");
+#endif
+    printf("P = %.f%%\n\n", P * 100);
 
     open_connection(&s_head);
     

@@ -23,7 +23,7 @@
 #include "server.h"
 
 /* Global Variables */
-struct timespec T  = {0, 200000000};                                        //timeout {seconds, nanoseconds}
+struct timespec timeout;
 
 unsigned long myseq;                                                //sequence number
 unsigned long expected_seq = 0;                                     //next expected sequence number
@@ -131,12 +131,12 @@ void * send_message(void * args)
      * It can use both a fixed value timer or an adaptive timer
      */
     
-    int i = -1, j, check = 0;
+    int i = -1, j, check = 0, rx = 0;
     struct qnode ** snd_queue = (struct qnode **) args;
     struct qnode * node = NULL;
     struct msg m;
-    socklen_t addlen;
-    struct timespec timeout;
+    socklen_t addlen = sizeof(cliaddr);
+    struct timespec rx_timeout;
     struct timespec time_to_wait;
     long double temp;
     
@@ -144,7 +144,6 @@ void * send_message(void * args)
     /* 
      * variables needed for the adaptive timer
      */
-    int rx = 0;
     struct timespec sampleRTT = {0, 0};
     long double estimatedRTT = 0.0;
     long double devRTT = 0.0;
@@ -207,8 +206,8 @@ void * send_message(void * args)
         perror("pthread_mutex_unlock");
         exit(EXIT_FAILURE);
     }
-
-    addlen = sizeof(cliaddr);
+    
+    timeout = timespec_from_double(T);
     
     srand(time(NULL));
         
@@ -216,19 +215,6 @@ void * send_message(void * args)
 #ifdef verbose
         printf("Thread %lu sending msg #%lu\n", pthread_self(), node->m->seq);
 #endif
-        check = pthread_mutex_lock(&snd_mutex);
-        if(check != 0) {
-            perror("pthread_mutex_lock");
-            exit(EXIT_FAILURE);
-        }
-        
-        timeout = T;
-        
-        check = pthread_mutex_unlock(&snd_mutex);
-        if(check != 0) {
-            perror("pthread_mutex_unlock");
-            exit(EXIT_FAILURE);
-        }
         
         reset_msg(&m);
         memcpy(&m, node->m, sizeof(struct msg));    //extract the message from the node
@@ -288,14 +274,19 @@ void * send_message(void * args)
         
         while(!acked[i]) {  //until the message is not acked, continue to retransmit it
             clock_gettime(CLOCK_REALTIME, &time_to_wait);
-            time_to_wait = timespec_add(time_to_wait, timeout);
+            
+            if(rx == 0) {
+                time_to_wait = timespec_add(time_to_wait, timeout);
+            }
+            else {
+                time_to_wait = timespec_add(time_to_wait, rx_timeout);
+            }
             
             check = pthread_cond_timedwait(&ack_cond[i], &mutexes[i], &time_to_wait);
             if(check != 0) {
-                if(check == ETIMEDOUT) {    //if the timer expires, then we must try to send again the message
-#ifdef adaptive                
+                if(check == ETIMEDOUT) {    //if the timer expires, then we must try to send again the message              
                     rx = 1;
-#endif                     
+                     
                     if(rand_value() > P) {
                         check = sendto(connsd, (void *) &m, sizeof(struct msg), 0, (struct sockaddr *) &cliaddr, addlen);
                         if(check < 0) {
@@ -313,12 +304,12 @@ void * send_message(void * args)
                     }
                     
                     //if the timer expires, it doubles for a maximum of MAX_TIMEOUT_INTERVAL seconds
-                    timeout = timespec_add(timeout, timeout);   
-                    temp = timespec_to_double(timeout);
+                    rx_timeout = timespec_add(timeout, timeout);   
+                    temp = timespec_to_double(rx_timeout);
                     if(temp > MAX_TIMEOUT_INTERVAL) {
                         temp = MAX_TIMEOUT_INTERVAL;
                     }
-                    timeout = timespec_from_double(temp);               
+                    rx_timeout = timespec_from_double(temp);             
                 }
                 else {
                     perror("pthread_cond_timedwait");
@@ -349,29 +340,30 @@ void * send_message(void * args)
             estimatedRTT = (1 - ALFA) * estimatedRTT + ALFA * temp;
             devRTT = (1 - BETA) * devRTT + BETA * fabsl(temp - estimatedRTT);
             
-            if(node->m->seq == send_base->m->seq) { //update the timer value only if the node is the send_base
-                check = pthread_mutex_lock(&snd_mutex);
-                if(check != 0) {
-                    perror("pthread_mutex_lock");
-                    exit(EXIT_FAILURE);
-                }
+            check = pthread_mutex_lock(&snd_mutex);
+            if(check != 0) {
+                perror("pthread_mutex_lock");
+                exit(EXIT_FAILURE);
+            }
+        
+            temp = estimatedRTT + 4 * devRTT;
+            if(temp > MAX_TIMEOUT_INTERVAL) {
+                temp = MAX_TIMEOUT_INTERVAL;
+            }
             
-                temp = estimatedRTT + 4 * devRTT;
-                if(temp > MAX_TIMEOUT_INTERVAL) {
-                    temp = MAX_TIMEOUT_INTERVAL;
-                }
-                T = timespec_from_double(temp);                
-                            
-                check = pthread_mutex_unlock(&snd_mutex);
-                if(check != 0) {
-                    perror("pthread_mutex_unlock");
-                    exit(EXIT_FAILURE);
-                }
+//                 printf("timeout = %Lf\n", temp);
+            
+            timeout = timespec_from_double(temp);  
+                        
+            check = pthread_mutex_unlock(&snd_mutex);
+            if(check != 0) {
+                perror("pthread_mutex_unlock");
+                exit(EXIT_FAILURE);
             }
         }
-        
-        rx = 0;
 #endif
+        rx = 0;
+        
         check = pthread_mutex_lock(&snd_mutex);
         if(check != 0) {
             perror("pthread_mutex_lock");
@@ -992,7 +984,7 @@ void recv_msg(struct qnode ** send_queue)
     struct msg m;
     socklen_t addlen = sizeof(cliaddr);
     fd_set rset;
-    struct timeval tv = {15, 0};
+    struct timeval tv;
     
     pthread_t * h_tid = (pthread_t *) malloc(N * sizeof(pthread_t));    //msg handler threads
     if(!h_tid) {
@@ -1024,7 +1016,10 @@ void recv_msg(struct qnode ** send_queue)
     
     while(!end) {   //until the connection is not closed
         FD_SET(connsd, &rset);
+        tv.tv_sec = 5;
+        tv.tv_usec = 0;
         
+        //wait 5 seconds for new messages, then wake up to check if the connection is still open
         check = select(connsd+1, &rset, NULL, NULL, &tv);
         if(check < 0) {
             perror("select");
@@ -1057,6 +1052,9 @@ void recv_msg(struct qnode ** send_queue)
                 else {
                     if(m.ack != 1) {
                         send_ack(connsd, &cliaddr, myseq, m.seq);
+                    }
+                    else if(m.ack == 1) {
+                        insert_sorted(&rec_queue, NULL, &m, -1);
                     }
                 }
 
@@ -1154,6 +1152,7 @@ int main(int argc, char** argv)
 
             close(connsd);
             printf("Connection closed with client on port %u\n\n", ntohs((cliaddr).sin_port));
+            expected_seq = 0;
             exit(EXIT_SUCCESS);
         }
         
