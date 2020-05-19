@@ -1027,7 +1027,7 @@ void send_cmd(struct qnode ** send_queue)
                 "- list\n"
                 "- get <filename>\n"
                 "- put <filename>\n"
-                "- mylist"
+                "- mylist\n"
                 "- help\n"
                 "- quit\n\n");
         }
