@@ -24,8 +24,8 @@ char* read_line(void)
     
     if(getline(&line, &bsize, stdin) == -1)
     {
-        fprintf(stderr, "ERROR: getline() call failed.\n");
-        exit(-1);
+        perror("getline");
+        exit(EXIT_FAILURE);
     }
 
     return line;
@@ -43,8 +43,8 @@ char** split_line(char* line)
 
     if(!tokens)
     {
-        fprintf(stderr, "ERROR: malloc() call failed.\n");
-        exit(-1);
+        perror("malloc");
+        exit(EXIT_FAILURE);
     }
 
     tok = strtok(line, TOK_DELIM);
@@ -62,7 +62,7 @@ char** split_line(char* line)
             tokens = realloc(tokens, bsize * sizeof(char*));
             if(!tokens)
             {
-                fprintf(stderr, "ERROR: realloc() call failed.\n");
+                perror("realloc");
                 exit(EXIT_FAILURE);
             }
         }

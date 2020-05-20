@@ -30,6 +30,8 @@ struct timespec end_test;
 unsigned long myseq;                                            //sequence number
 unsigned long expected_seq = 0;                                 //next expected sequence number
 int sockfd, fd, first_open = 1, closed = 0, opened = 0;
+long unsigned int arrived = 0;
+double percentage = 0.0;
 unsigned long bsize = BUFF_SIZE;                                //buffer size
 struct sockaddr_in servaddr;                                    //server's address
 struct qnode * rec_queue = NULL;                                //receiving queue
@@ -374,6 +376,22 @@ void * send_message(void * args)
             }
         }
         
+        if(node->m->cmd_t == 3) {
+            arrived += node->m->data_size;
+            percentage = (double) (arrived * 100) / node->m->file_size;
+            for(int x = 0; x < percentage; x++)
+            {   
+                printf("|");
+            }
+            printf("[%.2f%%]\r", percentage);
+            fflush(stdout);
+            
+            if(node->m->endfile == 1) {
+                arrived = 0;
+                percentage = 0.0;
+            }
+        }
+        
         //select the new send base, delete the node from the sending queue and search for a new node, if exists
         send_base = send_base->next;        
         delete_node(snd_queue, &m);
@@ -593,9 +611,20 @@ void * msg_handler(void * args)
                             }
                         }
                         
+                        arrived += msg_node->m->data_size;
+                        percentage = (double) (arrived * 100) / msg_node->m->file_size;
+                        for(int x = 0; x < percentage; x++)
+                        {   
+                            printf("|");
+                        }
+                        printf("[%.2f%%]\r", percentage);
+                        fflush(stdout);
+                        
                         if(msg_node->m->endfile == 1) { //if the message is the last in the ordered sequence, close the file
                             close(fd);
-                            printf("\nDownload completed!\n\n");                            
+                            percentage = 0.0;
+                            arrived = 0;
+                            printf("\n\nDownload completed!\n");                            
                             clock_gettime(CLOCK_REALTIME, &end_test);
                             printf("Total time elapsed: %.3Lf s\n\n", timespec_to_double(timespec_sub(end_test, start_test)));                            
                         }
@@ -616,7 +645,7 @@ void * msg_handler(void * args)
                 }
                 else if(msg_node->m->cmd_t == 3) { //if the message is an answer to the post command 
                     if(msg_node->m->ecode == success) {
-                        printf("\nFile uploaded correctly!\n\n");                        
+                        printf("\n\nFile uploaded correctly!\n");                        
                         clock_gettime(CLOCK_REALTIME, &end_test);
                         printf("Total time elapsed: %.3Lf s\n\n", timespec_to_double(timespec_sub(end_test, start_test)));                       
                     }
@@ -966,6 +995,7 @@ void send_cmd(struct qnode ** send_queue)
         
     while(!end) {
         cmd = read_line();
+        printf("\n");
 
         tokens = split_line(cmd);   //split the commands to parse them
 
