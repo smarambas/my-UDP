@@ -50,6 +50,7 @@ pthread_mutex_t snd_mutex = PTHREAD_MUTEX_INITIALIZER;          //to sync the ac
 pthread_mutex_t wr_mutex = PTHREAD_MUTEX_INITIALIZER;           //to sync writes on the file
 pthread_mutex_t close_mutex = PTHREAD_MUTEX_INITIALIZER;    
 pthread_mutex_t open_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t prog_mutex = PTHREAD_MUTEX_INITIALIZER;         //to sync the print of the progress bar
 pthread_mutex_t exp_mutex = PTHREAD_MUTEX_INITIALIZER;          //to sync the updates to expected_seq
 pthread_cond_t index_cond = PTHREAD_COND_INITIALIZER;           //to signal the release of an index
 pthread_cond_t close_cond = PTHREAD_COND_INITIALIZER;           //to signal the closing of the connection
@@ -57,6 +58,7 @@ pthread_cond_t open_cond = PTHREAD_COND_INITIALIZER;            //to signal the 
 pthread_cond_t rec_cond = PTHREAD_COND_INITIALIZER;             //to signal the receiving of messages
 pthread_cond_t sb_cond = PTHREAD_COND_INITIALIZER;              //to signal updates to send_base
 pthread_cond_t exp_cond = PTHREAD_COND_INITIALIZER;             //to signal updates to expected_seq
+pthread_cond_t prog_cond = PTHREAD_COND_INITIALIZER;            //to signal end of printing the progress bar
 pthread_cond_t ack_cond[N];                                     //to signal to thread i the arriving of an ack
 
 
@@ -379,14 +381,18 @@ void * send_message(void * args)
         if(node->m->cmd_t == 3) {
             arrived += node->m->data_size;
             percentage = (double) (arrived * 100) / node->m->file_size;
-            for(int x = 0; x < percentage; x++)
+            printf("\rProgress: [");
+            for(int x = 1; x <= percentage; x++)
             {   
-                printf("|");
+                if(x % 5 == 0) {
+                    printf("#");
+                }
             }
-            printf("[%.2f%%]\r", percentage);
+            printf(" %.2f%%]", percentage);
             fflush(stdout);
             
             if(node->m->endfile == 1) {
+                pthread_cond_signal(&prog_cond);
                 arrived = 0;
                 percentage = 0.0;
             }
@@ -613,11 +619,14 @@ void * msg_handler(void * args)
                         
                         arrived += msg_node->m->data_size;
                         percentage = (double) (arrived * 100) / msg_node->m->file_size;
-                        for(int x = 0; x < percentage; x++)
+                        printf("\rProgress: [");
+                        for(int x = 1; x <= percentage; x++)
                         {   
-                            printf("|");
+                            if(x % 5 == 0) {
+                                printf("#");
+                            }
                         }
-                        printf("[%.2f%%]\r", percentage);
+                        printf(" %.2f%%]", percentage);
                         fflush(stdout);
                         
                         if(msg_node->m->endfile == 1) { //if the message is the last in the ordered sequence, close the file
@@ -645,9 +654,31 @@ void * msg_handler(void * args)
                 }
                 else if(msg_node->m->cmd_t == 3) { //if the message is an answer to the post command 
                     if(msg_node->m->ecode == success) {
-                        printf("\n\nFile uploaded correctly!\n");                        
                         clock_gettime(CLOCK_REALTIME, &end_test);
-                        printf("Total time elapsed: %.3Lf s\n\n", timespec_to_double(timespec_sub(end_test, start_test)));                       
+                        
+                        check = pthread_mutex_lock(&prog_mutex);
+                        if(check != 0) {
+                            perror("pthread_mutex_lock");
+                            exit(EXIT_FAILURE);
+                        }
+                        
+                        while(arrived != 0) {
+                            check = pthread_cond_wait(&prog_cond, &prog_mutex);
+                            if(check != 0) {
+                                perror("pthread_cond_wait");
+                                exit(EXIT_FAILURE);
+                            }
+                        }
+                        
+                        printf("\rProgress: [#################### 100.00%%]"
+                               "\n\nFile uploaded correctly!\n");                        
+                        printf("Total time elapsed: %.3Lf s\n\n", timespec_to_double(timespec_sub(end_test, start_test)));    
+                        
+                        check = pthread_mutex_unlock(&prog_mutex);
+                        if(check != 0) {
+                            perror("pthread_mutex_unlock");
+                            exit(EXIT_FAILURE);
+                        }
                     }
                     else {
                         printf("\nError: the upload failed.\n\n");  //if the upload fails, we close the connection because almost surely the server crashed
@@ -995,116 +1026,122 @@ void send_cmd(struct qnode ** send_queue)
         
     while(!end) {
         cmd = read_line();
-        printf("\n");
+        
+        if(cmd != NULL) {
+            tokens = split_line(cmd);   //split the commands to parse them
 
-        tokens = split_line(cmd);   //split the commands to parse them
+            if(strcmp(tokens[0], "list") == 0) {
+                reset_msg(&m);
+                myseq += 1;
+                m.seq = myseq;
+                m.data_size = 1;
+                m.startfile = 1;
+                m.endfile = 1;
+                m.cmd_t = 1;
 
-        if(strcmp(tokens[0], "list") == 0) {
-            reset_msg(&m);
-            myseq += 1;
-            m.seq = myseq;
-            m.data_size = 1;
-            m.startfile = 1;
-            m.endfile = 1;
-            m.cmd_t = 1;
-
-            insert_sorted(send_queue, &servaddr, &m, -1);
-            send_base = *send_queue;
-                        
-            clock_gettime(CLOCK_REALTIME, &start_test);            
-            
-            t = pthread_create(&s_tid[0], NULL, send_message, (void *) send_queue); 
-            if(t != 0) {
-                perror("pthread_create");
-                exit(EXIT_FAILURE);
-            }
-        }
-        else if(strcmp(tokens[0], "get") == 0 && tokens[1] != NULL) {
-            reset_msg(&m);
-            myseq += strlen(tokens[1]);
-            m.seq = myseq;
-            m.startfile = 1;
-            m.endfile = 1;
-            m.cmd_t = 2;
-            m.data_size = strlen(tokens[1]);
-            m.file_size = m.data_size;
-            memcpy(m.data, tokens[1], strlen(tokens[1]));
-            
-            first_open = 1;
-            memset(new_file, 0, BUFF_SIZE);
-            strcat(new_file, "files_client/");
-            strcat(new_file, tokens[1]);
-
-            insert_sorted(send_queue, &servaddr, &m, -1);
-            send_base = *send_queue;
-            
-            clock_gettime(CLOCK_REALTIME, &start_test);
-
-            t = pthread_create(&s_tid[0], NULL, send_message, (void *) send_queue); 
-            if(t != 0) {
-                perror("pthread_create");
-                exit(EXIT_FAILURE);
-            }
-        }
-        else if(strcmp(tokens[0], "put") == 0 && tokens[1] != NULL) {
-            send_file(send_queue, tokens[1]);
-        }
-        else if(strcmp(tokens[0], "mylist") == 0) {
-            print_mylist();
-        }
-        else if(strcmp(tokens[0], "help") == 0) {
-            printf("\nInsert one of the following requests to the server:\n"
-                "- list\n"
-                "- get <filename>\n"
-                "- put <filename>\n"
-                "- mylist\n"
-                "- help\n"
-                "- quit\n\n");
-        }
-        else if(strcmp(tokens[0], "quit") == 0) {   //close connection
-            reset_msg(&m);
-            myseq += 1;
-            m.seq = myseq;
-            m.startfile = 1;
-            m.endfile = 1;
-            m.data_size = 1;
-            m.fin = 1;
-            
-            insert_sorted(send_queue, &servaddr, &m, -1);
-            send_base = *send_queue;
-            
-            t = pthread_create(&s_tid[0], NULL, send_message, (void *) send_queue); 
-            if(t != 0) {
-                perror("pthread_create");
-                exit(EXIT_FAILURE);
-            }
-            
-            check = pthread_mutex_lock(&close_mutex);
-            if(check != 0) {
-                perror("pthread_mutex_lock");
-                exit(EXIT_FAILURE);
-            }
-            
-            while(!closed) {    //wait for the fin message
-                check = pthread_cond_wait(&close_cond, &close_mutex);
-                if(check != 0) {
-                    perror("pthread_cond_wait");
+                insert_sorted(send_queue, &servaddr, &m, -1);
+                send_base = *send_queue;
+                            
+                clock_gettime(CLOCK_REALTIME, &start_test);            
+                
+                t = pthread_create(&s_tid[0], NULL, send_message, (void *) send_queue); 
+                if(t != 0) {
+                    perror("pthread_create");
                     exit(EXIT_FAILURE);
                 }
             }
-            
-            check = pthread_mutex_unlock(&close_mutex);
-            if(check != 0) {
-                perror("pthread_mutex_unlock");
-                exit(EXIT_FAILURE);
+            else if(strcmp(tokens[0], "get") == 0 && tokens[1] != NULL) {
+                printf("\n");
+                reset_msg(&m);
+                myseq += strlen(tokens[1]);
+                m.seq = myseq;
+                m.startfile = 1;
+                m.endfile = 1;
+                m.cmd_t = 2;
+                m.data_size = strlen(tokens[1]);
+                m.file_size = m.data_size;
+                memcpy(m.data, tokens[1], strlen(tokens[1]));
+                
+                first_open = 1;
+                memset(new_file, 0, BUFF_SIZE);
+                strcat(new_file, "files_client/");
+                strcat(new_file, tokens[1]);
+
+                insert_sorted(send_queue, &servaddr, &m, -1);
+                send_base = *send_queue;
+                
+                clock_gettime(CLOCK_REALTIME, &start_test);
+
+                t = pthread_create(&s_tid[0], NULL, send_message, (void *) send_queue); 
+                if(t != 0) {
+                    perror("pthread_create");
+                    exit(EXIT_FAILURE);
+                }
             }
-            
-            printf("\nClosing connection...\n");
-            time_to_wait.tv_sec = 30.0;
-            time_to_wait.tv_nsec = 0;
-            nanosleep(&time_to_wait, NULL); //wait 30 seconds before closing the connection
-            
-            end = 1;
+            else if(strcmp(tokens[0], "put") == 0 && tokens[1] != NULL) {
+                printf("\n");
+                send_file(send_queue, tokens[1]);
+            }
+            else if(strcmp(tokens[0], "mylist") == 0) {
+                print_mylist();
+            }
+            else if(strcmp(tokens[0], "help") == 0) {
+                printf("\nInsert one of the following requests to the server:\n"
+                    "- list\n"
+                    "- get <filename>\n"
+                    "- put <filename>\n"
+                    "- mylist\n"
+                    "- help\n"
+                    "- quit\n\n");
+            }
+            else if(strcmp(tokens[0], "quit") == 0) {   //close connection
+                reset_msg(&m);
+                myseq += 1;
+                m.seq = myseq;
+                m.startfile = 1;
+                m.endfile = 1;
+                m.data_size = 1;
+                m.fin = 1;
+                
+                insert_sorted(send_queue, &servaddr, &m, -1);
+                send_base = *send_queue;
+                
+                t = pthread_create(&s_tid[0], NULL, send_message, (void *) send_queue); 
+                if(t != 0) {
+                    perror("pthread_create");
+                    exit(EXIT_FAILURE);
+                }
+                
+                check = pthread_mutex_lock(&close_mutex);
+                if(check != 0) {
+                    perror("pthread_mutex_lock");
+                    exit(EXIT_FAILURE);
+                }
+                
+                while(!closed) {    //wait for the fin message
+                    check = pthread_cond_wait(&close_cond, &close_mutex);
+                    if(check != 0) {
+                        perror("pthread_cond_wait");
+                        exit(EXIT_FAILURE);
+                    }
+                }
+                
+                check = pthread_mutex_unlock(&close_mutex);
+                if(check != 0) {
+                    perror("pthread_mutex_unlock");
+                    exit(EXIT_FAILURE);
+                }
+                
+                printf("\nClosing connection...\n");
+                time_to_wait.tv_sec = 30.0;
+                time_to_wait.tv_nsec = 0;
+                nanosleep(&time_to_wait, NULL); //wait 30 seconds before closing the connection
+                
+                end = 1;
+            }
+            else {
+                printf("\nBad command, please try again.\n\n");
+            }
         }
         else {
             printf("\nBad command, please try again.\n\n");
@@ -1163,7 +1200,7 @@ int main(int argc, char** argv)
         exit(EXIT_FAILURE);
     } 
     
-    printf("\nN = %d\nT = %.2f s ", N, T);
+    printf("\nN = %d\nT = %.3f s ", N, (double) T);
 #ifndef adaptive 
     printf("(fixed timer)\n");
 #endif        

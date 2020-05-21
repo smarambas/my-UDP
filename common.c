@@ -27,7 +27,11 @@ char* read_line(void)
         perror("getline");
         exit(EXIT_FAILURE);
     }
-
+        
+    if(strcmp(line, " ") == 0 || strcmp(line, "\t") == 0 || strcmp(line, "\n") == 0 || strcmp(line, "") == 0 || strcmp(line, "\r") == 0 || strcmp(line, "\a") == 0) {
+        return NULL;
+    }
+    
     return line;
 }
 
@@ -48,11 +52,11 @@ char** split_line(char* line)
     }
 
     tok = strtok(line, TOK_DELIM);
-
+    
     while(tok != NULL)
     {
         tokens[position] = tok;
-
+        
         position++;
 
         if(position > bsize)
@@ -69,7 +73,7 @@ char** split_line(char* line)
 
         tok = strtok(NULL, TOK_DELIM);  //next argument
     }
-    
+        
     tokens[position] = NULL;
     return tokens;
 }
