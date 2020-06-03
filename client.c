@@ -43,7 +43,7 @@ int snd_indexes[N] = {0};                                       //array of index
 int rcv_indexes[N] = {0};                                       //array of indexes for the receiving threads
 pthread_mutex_t index_mutex = PTHREAD_MUTEX_INITIALIZER;        //to sync the index and message choice between threads
 pthread_mutex_t rec_index_mutex = PTHREAD_MUTEX_INITIALIZER;    //to sync the index choice between handling threads
-pthread_mutex_t mutexes[N];                                     //to sync the sending threads and the receiving thread
+pthread_mutex_t mutexes[N];                                     //to sync the sending threads and the handling threads
 pthread_mutex_t acked_mutexes[N];                               //to make the access to acked[i] more robust
 pthread_mutex_t rec_mutex = PTHREAD_MUTEX_INITIALIZER;          //to sync the access to the rec_queue
 pthread_mutex_t snd_mutex = PTHREAD_MUTEX_INITIALIZER;          //to sync the accesses to snd_queue
@@ -801,14 +801,14 @@ void * recv_msg(void * args)
 
             if(m.seq >= expected_seq) {  //if the message is not old
                 check = insert_sorted(&rec_queue, NULL, &m, -1);    
-                if((check == 1 && m.ack != 1) || (check == 1 && m.ack == 1 && m.syn == 1)) {
-                    send_ack(sockfd, &servaddr, ++myseq, m.seq);
+                if((check == 1 && m.ack != 1) || (check == 1 && m.ack == 1 && m.syn == 1)) {    //if the insertion was succesful and the message is not an ack or the message is a syn-ack
+                    send_ack(sockfd, &servaddr, ++myseq, m.seq);    //send an ack and increment myseq
                 }
-                else if(check != 1 && m.ack != 1){
-                    send_ack(sockfd, &servaddr, myseq, m.seq);
+                else if(check != 1 && m.ack != 1){  //if the insertion was not succesful then the message is a retrasmission
+                    send_ack(sockfd, &servaddr, myseq, m.seq);  //send an ack without incrementing myseq      
                 }
             }
-            else {
+            else {  //the message is a retrasmission
                 if(m.ack != 1) {
                     send_ack(sockfd, &servaddr, myseq, m.seq);
                 }
@@ -900,7 +900,7 @@ void send_file(struct qnode ** send_queue, char * filename)
     fd = open(file, O_RDONLY);
     if(fd == -1) {
         if(errno == ENOENT) {
-            printf("\nError: the file to send doesn't exist.\n");
+            printf("\nError: the file to send doesn't exist. Please, try again.\n\n");
             return;
         }
         else {

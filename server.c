@@ -37,12 +37,11 @@ int rcv_indexes[N] = {0};                                           //array of i
 char new_file[BUFF_SIZE] = {0};                                     //requested file name
 pthread_mutex_t index_mutex = PTHREAD_MUTEX_INITIALIZER;            //to sync the index choice between threads
 pthread_mutex_t rec_index_mutex = PTHREAD_MUTEX_INITIALIZER;        //to sync the index choice between handling threads
-pthread_mutex_t mutexes[N];                                         //to sync the sending threads and the receiving thread
+pthread_mutex_t mutexes[N];                                         //to sync the sending threads and the handling threads
 pthread_mutex_t acked_mutexes[N];                                   //to make the access to acked[i] more robust
 pthread_mutex_t rec_mutex = PTHREAD_MUTEX_INITIALIZER;              //to sync the accesses to rec_queue
 pthread_mutex_t snd_mutex = PTHREAD_MUTEX_INITIALIZER;              //to sync the accesses to snd_queue
 pthread_mutex_t exp_mutex = PTHREAD_MUTEX_INITIALIZER;              //to sync the updates to expected_seq
-pthread_mutex_t close_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t wr_mutex = PTHREAD_MUTEX_INITIALIZER;               //to sync writes on the file
 pthread_cond_t index_cond = PTHREAD_COND_INITIALIZER;               //to signal the release of an index
 pthread_cond_t rec_cond = PTHREAD_COND_INITIALIZER;                 //to signal the receiving of messages
@@ -1042,14 +1041,14 @@ void recv_msg(struct qnode ** send_queue)
 
                 if(m.seq >= expected_seq) {  //the message is not old
                     check = insert_sorted(&rec_queue, NULL, &m, -1);
-                    if(check == 1 && m.ack != 1) {
-                        send_ack(connsd, &cliaddr, ++myseq, m.seq);
+                    if(check == 1 && m.ack != 1) {  //if the insertion was succesful and the message is not an ack
+                        send_ack(connsd, &cliaddr, ++myseq, m.seq); //send an ack and increment myseq
                     }
-                    else if(check == 0 && m.ack != 1){
-                        send_ack(connsd, &cliaddr, myseq, m.seq);
+                    else if(check == 0 && m.ack != 1){  //if the insertion was not succesful then the message is a retrasmission
+                        send_ack(connsd, &cliaddr, myseq, m.seq);   //send an ack without incrementing myseq                                                         
                     }
                 }
-                else {
+                else {  //the message is a retrasmission
                     if(m.ack != 1) {
                         send_ack(connsd, &cliaddr, myseq, m.seq);
                     }
