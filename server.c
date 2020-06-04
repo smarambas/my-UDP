@@ -35,6 +35,7 @@ int acked[N] = {0};                                                 //array to r
 int snd_indexes[N] = {0};                                           //array of indexes for the sending threads
 int rcv_indexes[N] = {0};                                           //array of indexes for the receiving threads
 char new_file[BUFF_SIZE] = {0};                                     //requested file name
+
 pthread_mutex_t index_mutex = PTHREAD_MUTEX_INITIALIZER;            //to sync the index choice between threads
 pthread_mutex_t rec_index_mutex = PTHREAD_MUTEX_INITIALIZER;        //to sync the index choice between handling threads
 pthread_mutex_t mutexes[N];                                         //to sync the sending threads and the handling threads
@@ -48,6 +49,7 @@ pthread_cond_t rec_cond = PTHREAD_COND_INITIALIZER;                 //to signal 
 pthread_cond_t exp_cond = PTHREAD_COND_INITIALIZER;                 //to signal updates to expected_seq
 pthread_cond_t sb_cond = PTHREAD_COND_INITIALIZER;                  //to signal updates to send_base
 pthread_cond_t ack_cond[N];                                         //to signal to thread i the arriving of an ack
+
 pthread_t * s_tid;                                                  //array of sending threads
 
 
@@ -77,14 +79,16 @@ int accept_connection(int listensd, struct sockaddr_in * cliaddr, unsigned long 
             exit(EXIT_FAILURE);
         }
         
-        if(m.syn == 1 && m.seq > expected_seq) {
+        if(m.syn == 1 && m.seq > expected_seq) {    //m.seq needs to be > than expected_seq because a SYN message could be retrasmitted
             check = 1;
         }
     }
 
     printf("\nReceived SYN message from %s on port %u\n", inet_ntoa((*cliaddr).sin_addr), ntohs((*cliaddr).sin_port));
+    
     *cliseq = m.seq;
-    expected_seq = m.seq + 1;
+    expected_seq = m.seq + 1;   //initialize expected_seq
+    
     printf("Spawning a connection socket...\n");
 
     if((sd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
@@ -159,7 +163,7 @@ void * send_message(void * args)
     //select the index
     for(j = 0; j < N; j++) {
         if(snd_indexes[j] == 0) {
-            i = j;  //thread index
+            i = j;                  //thread's index
             snd_indexes[j] = 1;
             break;
         }
@@ -174,7 +178,7 @@ void * send_message(void * args)
         else {
             for(j = 0; j < N; j++) {
                 if(snd_indexes[j] == 0) {
-                    i = j;  //thread index
+                    i = j;                  //thread's index
                     snd_indexes[j] = 1;
                     break;
                 }
@@ -274,10 +278,10 @@ void * send_message(void * args)
         while(!acked[i]) {  //until the message is not acked, continue to retransmit it
             clock_gettime(CLOCK_REALTIME, &time_to_wait);
             
-            if(rx == 0) {
+            if(rx == 0) {   //use the standard timer
                 time_to_wait = timespec_add(time_to_wait, timeout);
             }
-            else {
+            else {  //use the retrasmission timer
                 time_to_wait = timespec_add(time_to_wait, rx_timeout);
             }
             
@@ -323,7 +327,7 @@ void * send_message(void * args)
             exit(EXIT_FAILURE);
         }
         
-        acked[i] = 0;
+        acked[i] = 0;   //reset the value to receive an ack for a new message
         
         check = pthread_mutex_unlock(&acked_mutexes[i]);
         if(check != 0) {
@@ -352,7 +356,7 @@ void * send_message(void * args)
             
 //                 printf("timeout = %Lf\n", temp);
             
-            timeout = timespec_from_double(temp);  
+            timeout = timespec_from_double(temp);   //new value for the timeout
                         
             check = pthread_mutex_unlock(&snd_mutex);
             if(check != 0) {
@@ -411,7 +415,7 @@ void * send_message(void * args)
         exit(EXIT_FAILURE);
     }
     
-    pthread_cond_broadcast(&index_cond);
+    pthread_cond_broadcast(&index_cond);    //signal that the index was released
     
     if(closed == 1) {
         end = 1;
@@ -430,7 +434,7 @@ void send_list(struct qnode ** send_queue)
     unsigned long bsize = PAYLOAD_SIZE; 
     size_t blen = 0;
     struct msg m;
-    int t, dim, i, sizetocpy, check, first = 1;
+    int t, dim, i, sizetocpy, check, first = 1, qs;
     struct dirent ** filelist;
 
     buff = malloc(bsize * sizeof(char));
@@ -468,10 +472,10 @@ void send_list(struct qnode ** send_queue)
     blen = strlen(buff);
     sizetocpy = (int) blen;
 
-    while(sizetocpy > 0) {
+    while(sizetocpy > 0) {  //while there is something to send
         reset_msg(&m);
 
-        if(sizetocpy > PAYLOAD_SIZE) {  //if the chunk is greater than the PAYLOAD_SIZE, then it's not the last message of the ordered sequence
+        if(sizetocpy > PAYLOAD_SIZE) {  //if sizetocpy is greater than PAYLOAD_SIZE, then it's not the last message of the ordered sequence
             dim = PAYLOAD_SIZE; 
             m.endfile = 0;
         }
@@ -512,9 +516,10 @@ void send_list(struct qnode ** send_queue)
     
     free(buff);
     send_base = *send_queue;
+    qs = queue_size(*send_queue);
     
     for(i = 0; i < N; i++) {
-        if(i < queue_size(*send_queue)) {
+        if(i < qs) {    //create only the necessary threads
             t = pthread_create(&s_tid[i], NULL, send_message, (void *) send_queue);
             if(t != 0) {
                 perror("pthread_create");
@@ -532,7 +537,7 @@ void send_file(struct qnode ** send_queue, char * filename)
      * Open the file, divide it in chunks, insert them in the sending queue and send them
      */
     
-    int fd, i, t, check, first = 1;
+    int fd, i, t, check, first = 1, qs;
     unsigned long filesize, dim = 0, bsize = PAYLOAD_SIZE;    
     struct msg m;
     char file[BUFF_SIZE] = "files_server/";
@@ -635,13 +640,14 @@ void send_file(struct qnode ** send_queue, char * filename)
     while(dim < filesize);
     
     send_base = *send_queue;
+    qs = queue_size(*send_queue);
     
 #ifdef verbose
     print_queue(*send_queue);
 #endif  
 
     for(i = 0; i < N; i++) {
-        if(i < queue_size(*send_queue)) {
+        if(i < qs) {    //create only the necessary threads
             t = pthread_create(&s_tid[i], NULL, send_message, (void *) send_queue);
             if(t != 0) {
                 perror("pthread_create");

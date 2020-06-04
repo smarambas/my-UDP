@@ -30,8 +30,8 @@ struct timespec end_test;
 unsigned long myseq;                                            //sequence number
 unsigned long expected_seq = 0;                                 //next expected sequence number
 int sockfd, fd, first_open = 1, closed = 0, opened = 0;
-long unsigned int arrived = 0;
-double percentage = 0.0;
+long unsigned int arrived = 0;                                  //size of the packets arrived
+double percentage = 0.0;                                        //percentage of competion
 unsigned long bsize = BUFF_SIZE;                                //buffer size
 struct sockaddr_in servaddr;                                    //server's address
 struct qnode * rec_queue = NULL;                                //receiving queue
@@ -41,6 +41,7 @@ char new_file[BUFF_SIZE] = {0};                                 //requested file
 int acked[N] = {0};                                             //array to report to sending threads that an ack is received
 int snd_indexes[N] = {0};                                       //array of indexes for the sending threads
 int rcv_indexes[N] = {0};                                       //array of indexes for the receiving threads
+
 pthread_mutex_t index_mutex = PTHREAD_MUTEX_INITIALIZER;        //to sync the index and message choice between threads
 pthread_mutex_t rec_index_mutex = PTHREAD_MUTEX_INITIALIZER;    //to sync the index choice between handling threads
 pthread_mutex_t mutexes[N];                                     //to sync the sending threads and the handling threads
@@ -48,8 +49,8 @@ pthread_mutex_t acked_mutexes[N];                               //to make the ac
 pthread_mutex_t rec_mutex = PTHREAD_MUTEX_INITIALIZER;          //to sync the access to the rec_queue
 pthread_mutex_t snd_mutex = PTHREAD_MUTEX_INITIALIZER;          //to sync the accesses to snd_queue
 pthread_mutex_t wr_mutex = PTHREAD_MUTEX_INITIALIZER;           //to sync writes on the file
-pthread_mutex_t close_mutex = PTHREAD_MUTEX_INITIALIZER;    
-pthread_mutex_t open_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t close_mutex = PTHREAD_MUTEX_INITIALIZER;        //to sync the closing of the connection
+pthread_mutex_t open_mutex = PTHREAD_MUTEX_INITIALIZER;         //to sync the opening of the connection
 pthread_mutex_t prog_mutex = PTHREAD_MUTEX_INITIALIZER;         //to sync the print of the progress bar
 pthread_mutex_t exp_mutex = PTHREAD_MUTEX_INITIALIZER;          //to sync the updates to expected_seq
 pthread_cond_t index_cond = PTHREAD_COND_INITIALIZER;           //to signal the release of an index
@@ -81,7 +82,7 @@ void open_connection(struct qnode ** send_queue)
     m.syn = 1;
     
     insert_sorted(send_queue, &servaddr, &m, -1);
-    send_base = *send_queue;
+    send_base = *send_queue;    
     
     t = pthread_create(&s_tid, NULL, send_message, (void *) send_queue);
     if(t != 0) {
@@ -96,10 +97,10 @@ void open_connection(struct qnode ** send_queue)
     }
     
     while(!opened) {    //wait for the SYN-ACK for 60 seconds
-        clock_gettime(CLOCK_REALTIME, &now);
-        time_to_wait = timespec_add(now, time_to_wait);
+        clock_gettime(CLOCK_REALTIME, &now);    //get the current time
+        time_to_wait = timespec_add(now, time_to_wait); //add 60 seconds
         
-        check = pthread_cond_timedwait(&open_cond, &open_mutex, &time_to_wait);
+        check = pthread_cond_timedwait(&open_cond, &open_mutex, &time_to_wait); //wait for the opening or the expiration of the timer
         if(check != 0 && check != ETIMEDOUT) {
             perror("pthread_cond_timedwait");
             exit(EXIT_FAILURE);
@@ -127,7 +128,7 @@ void open_connection(struct qnode ** send_queue)
 void * send_message(void * args)
 {
     /*
-     * Try to send a message and handle the ritrasmissions until an ack arrives
+     * Send a message and handle the ritrasmissions until an ack arrives
      * It can use both a fixed value timer or an adaptive timer
      */
     
@@ -160,7 +161,7 @@ void * send_message(void * args)
     //select the index
     for(j = 0; j < N; j++) {
         if(snd_indexes[j] == 0) {
-            i = j;  //thread index
+            i = j;                  //thread's index
             snd_indexes[j] = 1;
             break;
         }
@@ -175,7 +176,7 @@ void * send_message(void * args)
         else {
             for(j = 0; j < N; j++) {
                 if(snd_indexes[j] == 0) {
-                    i = j;  //thread index
+                    i = j;                  //thread's index
                     snd_indexes[j] = 1;
                     break;
                 }
@@ -275,10 +276,10 @@ void * send_message(void * args)
         while(!acked[i]) {  //until the message is not acked, continue to retransmit it
             clock_gettime(CLOCK_REALTIME, &time_to_wait);
             
-            if(rx == 0) {
+            if(rx == 0) {   //use the standard timer
                 time_to_wait = timespec_add(time_to_wait, timeout);
             }
-            else {
+            else {  //use the retrasmission timer
                 time_to_wait = timespec_add(time_to_wait, rx_timeout);
             }
             
@@ -324,7 +325,7 @@ void * send_message(void * args)
             exit(EXIT_FAILURE);
         }
         
-        acked[i] = 0;
+        acked[i] = 0;   //reset the value to receive an ack for a new message
         
         check = pthread_mutex_unlock(&acked_mutexes[i]);
         if(check != 0) {
@@ -353,7 +354,7 @@ void * send_message(void * args)
             
 //                 printf("timeout = %Lf\n", temp);
             
-            timeout = timespec_from_double(temp);    
+            timeout = timespec_from_double(temp);    //new value for the timeout
                         
             check = pthread_mutex_unlock(&snd_mutex);
             if(check != 0) {
@@ -378,7 +379,13 @@ void * send_message(void * args)
             }
         }
         
-        if(node->m->cmd_t == 3) {
+        if(node->m->cmd_t == 3) {   //if we're uploading a file, print the percentage bar
+            check = pthread_mutex_lock(&prog_mutex);
+            if(check != 0) {
+                perror("pthread_mutex_lock");
+                exit(EXIT_FAILURE);
+            }
+            
             arrived += node->m->data_size;
             percentage = (double) (arrived * 100) / node->m->file_size;
             printf("\rProgress: [");
@@ -395,6 +402,12 @@ void * send_message(void * args)
                 pthread_cond_signal(&prog_cond);
                 arrived = 0;
                 percentage = 0.0;
+            }
+            
+            check = pthread_mutex_unlock(&prog_mutex);
+            if(check != 0) {
+                perror("pthread_mutex_unlock");
+                exit(EXIT_FAILURE);
             }
         }
         
@@ -432,7 +445,7 @@ void * send_message(void * args)
         exit(EXIT_FAILURE);
     }
     
-    pthread_cond_broadcast(&index_cond);
+    pthread_cond_broadcast(&index_cond);    //signal that the index was released
 
     pthread_exit(NULL);
 }
@@ -484,7 +497,7 @@ void * msg_handler(void * args)
             }
         }
         
-        msg_node = search_node_to_serve(&rec_queue, i); //select a new node that has not yet been sent
+        msg_node = search_node_to_serve(&rec_queue, i); //select a new node that has not yet been served
         
         check = pthread_mutex_unlock(&rec_mutex);
         if(check != 0) {
@@ -513,7 +526,7 @@ void * msg_handler(void * args)
                         exit(EXIT_FAILURE);
                     }
                     
-                    acked[node->index] = 1; //report to the sending thread that the message is acked
+                    acked[node->index] = 1; 
                     
                     check = pthread_mutex_unlock(&acked_mutexes[node->index]);
                     if(check != 0) {
@@ -521,7 +534,7 @@ void * msg_handler(void * args)
                         exit(EXIT_FAILURE);
                     }
                     
-                    pthread_cond_signal(&ack_cond[node->index]);
+                    pthread_cond_signal(&ack_cond[node->index]);    //signal to the sending thread that the message is acked
 #ifdef verbose
                     printf("Ack received for message #%lu\n", msg_node->m->ack_num);
 #endif
@@ -539,7 +552,7 @@ void * msg_handler(void * args)
                         exit(EXIT_FAILURE);
                     }
                                         
-                    while((expected_seq - 1 + msg_node->m->data_size) != msg_node->m->seq) {
+                    while((expected_seq - 1 + msg_node->m->data_size) != msg_node->m->seq) {    //only a particular message has that sequence number
                         check = pthread_cond_wait(&exp_cond, &exp_mutex);
                         if(check != 0) {
                             perror("pthread_cond_wait");
@@ -604,7 +617,7 @@ void * msg_handler(void * args)
                             perror("write");
                             exit(EXIT_FAILURE);
                         }
-                        else if(check < (long int) msg_node->m->data_size) {
+                        else if(check < (long int) msg_node->m->data_size) {    //if we couldn't write everything, write the remaining bytes
                             residual = msg_node->m->data_size - check;
                             check = 0;
                             while(check < residual) {
@@ -662,7 +675,7 @@ void * msg_handler(void * args)
                             exit(EXIT_FAILURE);
                         }
                         
-                        while(arrived != 0) {
+                        while(arrived != 0) {   //could happen that the last ack arrives before the last sending thread exits
                             check = pthread_cond_wait(&prog_cond, &prog_mutex);
                             if(check != 0) {
                                 perror("pthread_cond_wait");
@@ -889,7 +902,7 @@ void send_file(struct qnode ** send_queue, char * filename)
      * Open the file, divide it in chunks, insert them in the sending queue and send them
      */
     
-    int fd, i, t, check;
+    int fd, i, t, check, qs;
     unsigned long filesize, dim = 0, buff_size = PAYLOAD_SIZE;    
     struct msg m;
     char file[BUFF_SIZE] = "files_client/";
@@ -912,7 +925,7 @@ void send_file(struct qnode ** send_queue, char * filename)
     filesize = (unsigned long) lseek(fd, 0, SEEK_END);
     lseek(fd, 0, SEEK_SET);
     
-    //send also the name of the file as first message
+    //send also the name of the file as the first message
     reset_msg(&m);
     m.startfile = 1;
     myseq += strlen(filename);
@@ -924,8 +937,8 @@ void send_file(struct qnode ** send_queue, char * filename)
     insert_sorted(send_queue, &servaddr, &m, -1);
     
 #ifdef verbose
-        printf("Inserted message with seq #%lu in the queue\n", m.seq);
-        print_queue(*send_queue);
+    printf("Inserted message with seq #%lu in the queue\n", m.seq);
+    print_queue(*send_queue);
 #endif    
     
     do {
@@ -970,11 +983,12 @@ void send_file(struct qnode ** send_queue, char * filename)
     while(dim < filesize);
     
     send_base = *send_queue;
+    qs = queue_size(*send_queue);
         
     clock_gettime(CLOCK_REALTIME, &start_test);    
 
     for(i = 0; i < N; i++) {
-        if(i < queue_size(*send_queue)) {   //create only the necessary number of threads
+        if(i < qs) {   //create only the necessary number of threads
             t = pthread_create(&s_tid[i], NULL, send_message, (void *) send_queue);
             if(t != 0) {
                 perror("pthread_create");
@@ -1001,7 +1015,7 @@ void send_cmd(struct qnode ** send_queue)
     sigset_t set;
     
     sigfillset(&set);
-    act.sa_handler = sigint_handler;
+    act.sa_handler = sigint_handler;    //set the SIGINT handler
     act.sa_mask = set;
     act.sa_flags = 0;
     check = sigaction(SIGINT, &act, NULL);
@@ -1010,7 +1024,7 @@ void send_cmd(struct qnode ** send_queue)
         exit(EXIT_FAILURE);
     }
 
-    pthread_t * s_tid = (pthread_t *) malloc(N * sizeof(pthread_t));    
+    pthread_t * s_tid = (pthread_t *) malloc(N * sizeof(pthread_t));    //allocate space for the sending threads
     if(!s_tid) {
         perror("malloc");
         exit(EXIT_FAILURE);
@@ -1028,7 +1042,7 @@ void send_cmd(struct qnode ** send_queue)
         cmd = read_line();
         
         if(cmd != NULL) {
-            tokens = split_line(cmd);   //split the commands to parse them
+            tokens = split_line(cmd);   //split the input to parse it
 
             if(strcmp(tokens[0], "list") == 0) {
                 reset_msg(&m);
