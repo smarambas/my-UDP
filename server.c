@@ -437,13 +437,13 @@ void send_list(struct qnode ** send_queue)
     int t, dim, i, sizetocpy, check, first = 1, qs;
     struct dirent ** filelist;
 
-    buff = malloc(bsize * sizeof(char));
+    buff = malloc((bsize+1) * sizeof(char));
     if(!buff) {
         perror("malloc");
         exit(EXIT_FAILURE);
     }
     
-    memset(buff, 0, bsize);
+    memset(buff, 0, bsize+1);
     
     check = scandir("./files_server/", &filelist, 0, versionsort);  //sort the list alphabetically
     if(check < 0) {
@@ -454,18 +454,21 @@ void send_list(struct qnode ** send_queue)
         blen = strlen(buff);
         for(i = 0; i < check; i++) {
             if(filelist[i]->d_name[0] != '.') {
-                if((blen + strlen(filelist[i]->d_name)) >= bsize) {
+                while((blen + strlen(filelist[i]->d_name)) >= bsize) {
                     bsize += PAYLOAD_SIZE; 
-                    buff = realloc(buff, bsize);
+                    buff = realloc(buff, bsize+1);
                     if(!buff) {
                         perror("realloc");
                         exit(EXIT_FAILURE);
                     }
                 }
+                
                 strcat(buff, filelist[i]->d_name);
                 strcat(buff, "\n");
+                blen = strlen(buff);
             }
         }
+        
         free(filelist);
     }
 
@@ -495,7 +498,7 @@ void send_list(struct qnode ** send_queue)
         else {
             m.startfile = 0;
         }
-
+        
         myseq += dim;
         m.seq = myseq;
         m.data_size = dim;
@@ -503,17 +506,17 @@ void send_list(struct qnode ** send_queue)
         m.cmd_t = 1;
         memcpy(m.data, buff, dim);
         str_cut(buff, 0, dim);
-
+                
         insert_sorted(send_queue, &cliaddr, &m, -1);
-        
+                
 #ifdef verbose
-            printf("Inserted message with seq #%lu in the queue\n", m.seq);
-            print_queue(*send_queue);
+        printf("Inserted message with seq #%lu in the queue\n", m.seq);
+        print_queue(*send_queue);
 #endif
         
         sizetocpy = (int) sizetocpy - dim; 
     }
-    
+        
     free(buff);
     send_base = *send_queue;
     qs = queue_size(*send_queue);
@@ -632,8 +635,8 @@ void send_file(struct qnode ** send_queue, char * filename)
                 
         insert_sorted(send_queue, &cliaddr, &m, -1);
 #ifdef verbose
-            printf("Inserted message with seq #%lu in the queue\n", m.seq);
-            print_queue(*send_queue);
+        printf("Inserted message with seq #%lu in the queue\n", m.seq);
+        print_queue(*send_queue);
 #endif
         dim += check;
     }

@@ -25,6 +25,13 @@ adaptive-verbose: client.c client.h server.c server.h common.c common.h myUDP.h
 	$(CC) $(CFLAGS) $(EXTRA_FLAGS) verbose $(EXTRA_FLAGS) adaptive client.o common.o -o client -pthread -lm 
 	$(CC) $(CFLAGS) $(EXTRA_FLAGS) verbose $(EXTRA_FLAGS) adaptive server.o common.o -o server -pthread -lm 
 
+debug: client.c client.h server.c server.h common.c common.h myUDP.h
+	$(CC) $(CFLAGS) -g $(EXTRA_FLAGS) adaptive client.c -c 
+	$(CC) $(CFLAGS) -g $(EXTRA_FLAGS) adaptive server.c -c 
+	$(CC) $(CFLAGS) -g $(EXTRA_FLAGS) adaptive common.c -c 
+	$(CC) $(CFLAGS) -g $(EXTRA_FLAGS) adaptive client.o common.o -o client -pthread -lm 
+	$(CC) $(CFLAGS) -g $(EXTRA_FLAGS) adaptive server.o common.o -o server -pthread -lm 
+
 client.o: client.c client.h myUDP.h
 	$(CC) $(CFLAGS) client.c -c
 
