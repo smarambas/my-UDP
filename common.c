@@ -209,6 +209,43 @@ int insert_sorted(struct qnode ** headp, struct sockaddr_in * addr, struct msg *
     return 1;
 }
 
+struct qnode * append(struct qnode ** tailp, struct sockaddr_in * addr, struct msg * m, int index)
+{
+    /*
+     * Append a new node in the queue and returns a pointer to the tail
+     */
+    
+    struct qnode * new;
+    struct qnode * tail = *tailp;
+    
+    new = malloc(sizeof(struct qnode));
+    if(!new) {
+        perror("malloc"); 
+        exit(EXIT_FAILURE);
+    }
+    
+    new->addr = addr;
+    if(m != NULL) {
+        new->m = (struct msg *) malloc(sizeof(struct msg));
+        if(!(new->m)) {
+            perror("malloc");
+            exit(EXIT_FAILURE);
+        }
+        memcpy(new->m, m, sizeof(struct msg));
+    }
+    new->index = index;
+    new->next = NULL;
+    
+    if(tail == NULL) {  //empty list
+        *tailp = new;
+        return *tailp;
+    }
+    else {
+        tail->next = new;
+        return new;
+    }
+}
+
 int delete_node(struct qnode ** headp, struct msg * m)
 {
     /*

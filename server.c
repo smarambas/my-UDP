@@ -543,6 +543,7 @@ void send_file(struct qnode ** send_queue, char * filename)
     int fd, i, t, check, first = 1, qs;
     unsigned long filesize, dim = 0, bsize = PAYLOAD_SIZE;    
     struct msg m;
+    struct qnode * tail = NULL;
     char file[BUFF_SIZE] = "files_server/";
     
     strcat(file, filename);
@@ -628,12 +629,14 @@ void send_file(struct qnode ** send_queue, char * filename)
         if(first == 1) {
             m.startfile = 1;
             first = 0;
+            tail = append(send_queue, &cliaddr, &m, -1);
         }
         else {
             m.startfile = 0;
+            tail = append(&tail, &cliaddr, &m, -1);
         }
                 
-        insert_sorted(send_queue, &cliaddr, &m, -1);
+        //insert_sorted(send_queue, &cliaddr, &m, -1);
 #ifdef verbose
         printf("Inserted message with seq #%lu in the queue\n", m.seq);
         print_queue(*send_queue);

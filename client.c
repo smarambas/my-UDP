@@ -905,8 +905,14 @@ void send_file(struct qnode ** send_queue, char * filename)
     int fd, i, t, check, qs;
     unsigned long filesize, dim = 0, buff_size = PAYLOAD_SIZE;    
     struct msg m;
+    struct qnode * tail = NULL;
     char file[BUFF_SIZE] = "files_client/";
+    
     pthread_t * s_tid = (pthread_t *) malloc(N * sizeof(pthread_t));
+    if(!s_tid) {
+        perror("malloc");
+        exit(EXIT_FAILURE);
+    }
     
     strcat(file, filename);
 
@@ -934,7 +940,8 @@ void send_file(struct qnode ** send_queue, char * filename)
     m.cmd_t = 3;
     memcpy(m.data, filename, strlen(filename));
     
-    insert_sorted(send_queue, &servaddr, &m, -1);
+    tail = append(send_queue, &servaddr, &m, -1);
+    //insert_sorted(send_queue, &servaddr, &m, -1);
     
 #ifdef verbose
     printf("Inserted message with seq #%lu in the queue\n", m.seq);
@@ -971,7 +978,8 @@ void send_file(struct qnode ** send_queue, char * filename)
         m.file_size = filesize + strlen(filename);
         m.cmd_t = 3;
                 
-        insert_sorted(send_queue, &servaddr, &m, -1);
+        tail = append(&tail, &servaddr, &m, -1);
+        //insert_sorted(send_queue, &servaddr, &m, -1);
         
 #ifdef verbose
         printf("Inserted message with seq #%lu in the queue\n", m.seq);
@@ -1161,7 +1169,7 @@ void send_cmd(struct qnode ** send_queue)
             printf("\nBad command, please try again.\n\n");
         }
     }
-
+    
     return;
 }
 
@@ -1234,6 +1242,8 @@ int main(int argc, char** argv)
     global_buffer[0] = '\0';
     
     send_cmd(&s_head);
+    
+    free(global_buffer);
 
     return 0;
 }
