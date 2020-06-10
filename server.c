@@ -546,6 +546,14 @@ void send_file(struct qnode ** send_queue, char * filename)
     struct qnode * tail = NULL;
     char file[BUFF_SIZE] = "files_server/";
     
+    //nedeed for inter-process syncronization on the files
+    struct flock lock;
+    lock.l_type = F_RDLCK;    //shared lock
+    lock.l_whence = SEEK_SET; 
+    lock.l_start = 0;         //1st byte in file
+    lock.l_len = 0;           //0 here means 'until EOF'
+    lock.l_pid = getpid();
+    
     strcat(file, filename);
 
     fd = open(file, O_RDONLY);
@@ -591,6 +599,11 @@ void send_file(struct qnode ** send_queue, char * filename)
             perror("open");
             exit(EXIT_FAILURE);
         }
+    }
+    
+    if(fcntl(fd, F_SETLKW, &lock) < 0) {    //get the lock on the file or wait for it
+        perror("fcntl");
+        exit(EXIT_FAILURE);
     }
 
     filesize = (unsigned long) lseek(fd, 0, SEEK_END);
@@ -645,6 +658,8 @@ void send_file(struct qnode ** send_queue, char * filename)
     }
     while(dim < filesize);
     
+    close(fd);  //release the lock implicitly
+    
     send_base = *send_queue;
     qs = queue_size(*send_queue);
     
@@ -676,6 +691,14 @@ void * msg_handler(void * args)
     struct qnode * node = NULL;
     struct qnode * msg_node = NULL;
     struct msg m;
+    
+    //nedeed for inter-process syncronization on the files
+    struct flock lock;
+    lock.l_type = F_WRLCK;    //exclusive lock
+    lock.l_whence = SEEK_SET; 
+    lock.l_start = 0;         //1st byte in file
+    lock.l_len = 0;           //0 here means 'until EOF'
+    lock.l_pid = getpid();    
     
     check = pthread_mutex_lock(&rec_index_mutex);
     if(check != 0) {
@@ -826,6 +849,11 @@ void * msg_handler(void * args)
                             exit(EXIT_FAILURE);
                         }
                         
+                        if(fcntl(fd, F_SETLKW, &lock) < 0) {    //get the lock on the file or wait for it
+                            perror("fcntl");
+                            exit(EXIT_FAILURE);
+                        }
+                        
                         first_open = 0;
                     }
                     
@@ -893,7 +921,7 @@ void * msg_handler(void * args)
                     }
                     
                     if(msg_node->m->endfile == 1) { //if the message is the last in the ordered sequence, close the file, send a message of success
-                        close(fd);
+                        close(fd);  //release the lock implicitly
                         reset_msg(&m);
                         myseq += 1;
                         m.seq = myseq;
@@ -1168,6 +1196,7 @@ int main(int argc, char** argv)
         }
         
         close(connsd);
+        expected_seq = 0;
     }
 
     return 0;

@@ -37,6 +37,7 @@ struct sockaddr_in servaddr;                                    //server's addre
 struct qnode * rec_queue = NULL;                                //receiving queue
 struct qnode * send_base = NULL;                                //pointer to the first element of the sending window
 char * global_buffer;                                           //buffer used by the handler threads
+char dir_name[BUFF_SIZE] = "files_client/client_";              //name of the client's directory
 char new_file[BUFF_SIZE] = {0};                                 //requested file name
 int acked[N] = {0};                                             //array to report to sending threads that an ack is received
 int snd_indexes[N] = {0};                                       //array of indexes for the sending threads
@@ -643,7 +644,7 @@ void * msg_handler(void * args)
                         fflush(stdout);
                         
                         if(msg_node->m->endfile == 1) { //if the message is the last in the ordered sequence, close the file
-                            close(fd);
+                            close(fd);  
                             percentage = 0.0;
                             arrived = 0;
                             printf("\n\nDownload completed!\n");                            
@@ -853,6 +854,7 @@ void print_mylist(void)
     char * buff;
     size_t blen = 0;
     struct dirent ** filelist;
+    char dname[BUFF_SIZE] = "./";
     
     buff = malloc(BUFF_SIZE * sizeof(char));
     if(!buff) {
@@ -861,8 +863,9 @@ void print_mylist(void)
     }
     
     memset(buff, 0, BUFF_SIZE);
+    strcat(dname, dir_name);
     
-    check = scandir("./files_client/", &filelist, 0, versionsort);  //sort the list alphabetically
+    check = scandir(dname, &filelist, 0, versionsort);  //sort the list alphabetically
     if(check < 0) {
         perror("scandir");
         exit(EXIT_FAILURE);
@@ -906,7 +909,7 @@ void send_file(struct qnode ** send_queue, char * filename)
     unsigned long filesize, dim = 0, buff_size = PAYLOAD_SIZE;    
     struct msg m;
     struct qnode * tail = NULL;
-    char file[BUFF_SIZE] = "files_client/";
+    char file[BUFF_SIZE] = {0};
     
     pthread_t * s_tid = (pthread_t *) malloc(N * sizeof(pthread_t));
     if(!s_tid) {
@@ -914,6 +917,7 @@ void send_file(struct qnode ** send_queue, char * filename)
         exit(EXIT_FAILURE);
     }
     
+    strcat(file, dir_name);
     strcat(file, filename);
 
     fd = open(file, O_RDONLY);
@@ -989,6 +993,8 @@ void send_file(struct qnode ** send_queue, char * filename)
         dim += check;
     }
     while(dim < filesize);
+    
+    close(fd);  
     
     send_base = *send_queue;
     qs = queue_size(*send_queue);
@@ -1086,7 +1092,7 @@ void send_cmd(struct qnode ** send_queue)
                 
                 first_open = 1;
                 memset(new_file, 0, BUFF_SIZE);
-                strcat(new_file, "files_client/");
+                strcat(new_file, dir_name);
                 strcat(new_file, tokens[1]);
 
                 insert_sorted(send_queue, &servaddr, &m, -1);
@@ -1178,6 +1184,7 @@ int main(int argc, char** argv)
     int t, servport, check = 0;
     struct qnode * s_head = NULL;   //send queue head
     pthread_t r_tid;                //receiving thread
+    char pid[16];
     
     if(argc != 3) {
         fprintf(stderr, "Usage: client <server IP address> <server port>\n");
@@ -1222,6 +1229,9 @@ int main(int argc, char** argv)
         exit(EXIT_FAILURE);
     } 
     
+    snprintf(pid, 16, "%d", (int) getpid());
+    printf("\nClient %s\n", pid);
+    
     printf("\nN = %d\nT = %.3f s ", N, (double) T);
 #ifndef adaptive 
     printf("(fixed timer)\n");
@@ -1232,6 +1242,15 @@ int main(int argc, char** argv)
     printf("P = %.f%%\n\n", P * 100);
 
     open_connection(&s_head);
+    
+    strcat(dir_name, pid);
+    if(mkdir(dir_name, 0777) < 0) { //create a directory for the client
+        if(errno != EEXIST) {   
+            perror("mkdir");
+            exit(EXIT_FAILURE);
+        }
+    }  
+    strcat(dir_name, "/");
     
     global_buffer = malloc(bsize * sizeof(char));
     if(!global_buffer) {

@@ -4,7 +4,7 @@
 #define PAYLOAD_SIZE                512
 
 #define N                           1           //window width
-#define P                           0.1        //probability of losing a packet    
+#define P                           0.05        //probability of losing a packet    
 #define T                           1.0         //timeout in seconds (double)
 
 #define ALFA                        0.125
